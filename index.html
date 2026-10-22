@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bills</title>
+<meta name="theme-color" content="#FFFFFF">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Bills">
+<meta name="robots" content="noindex">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #F4F5F8; --surface: #FFFFFF; --ink: #161B26; --ink2: #3B4252; --muted: #7B8494;
+    --line: #E7E9EE; --soft: #F7F8FA; --accent: #4C6EF5; --accent-soft: #EDF1FF;
+    --good: #2B8A3E; --good-soft: #E6F6EA; --bad: #E03131; --bad-soft: #FDECEC;
+    --radius: 16px; --shadow: 0 1px 2px rgba(16,24,40,.04), 0 4px 16px rgba(16,24,40,.06);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.45 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  button, input, select { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* ---------- top bar */
+  .top { position: sticky; top: 0; z-index: 20; background: rgba(255,255,255,.92); backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line); }
+  .top-in { max-width: 1240px; margin: 0 auto; padding: 12px 20px; display: flex; align-items: center; gap: 18px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 17px; letter-spacing: -.2px; }
+  .logo { width: 30px; height: 30px; border-radius: 9px; background: linear-gradient(135deg, #4C6EF5, #845EF7);
+    color: #fff; display: grid; place-items: center; font-weight: 800; font-size: 15px; }
+  nav { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; flex: 1; }
+  nav::-webkit-scrollbar { display: none; }
+  nav button { border: 0; background: transparent; padding: 8px 14px; border-radius: 999px; color: var(--muted);
+    font-weight: 600; white-space: nowrap; }
+  nav button:hover { color: var(--ink); background: var(--soft); }
+  nav button.on { background: var(--ink); color: #fff; }
+  .top-right { display: flex; align-items: center; gap: 12px; }
+  #status { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  #status.err { color: var(--bad); font-weight: 600; }
+  .btn { border: 1px solid var(--line); background: var(--surface); padding: 8px 14px; border-radius: 10px;
+    font-weight: 600; font-size: 13px; }
+  .btn:hover { border-color: #CDD2DB; }
+  .btn.primary { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .btn.danger { color: var(--bad); }
+  .btn.danger.solid { background: var(--bad); border-color: var(--bad); color: #fff; }
+  .btn.small { padding: 5px 10px; font-size: 12px; border-radius: 8px; }
+  .link { border: 0; background: none; padding: 0; color: var(--muted); font-size: 12px; font-weight: 600; }
+  .link:hover { color: var(--ink); }
+  .link.danger:hover { color: var(--bad); }
+
+  main { max-width: 1240px; margin: 0 auto; padding: 22px 20px 80px; }
+  .loading { padding: 80px 0; text-align: center; color: var(--muted); }
+  h1 { font-size: 26px; letter-spacing: -.5px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 18px; }
+
+  /* ---------- stat tiles */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 22px; }
+  .tile { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px 16px; }
+  .tile.click { cursor: pointer; }
+  .tile.click:hover { outline: 2px solid var(--accent-soft); }
+  .tile .lbl { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .tile .val { font-size: 24px; font-weight: 800; letter-spacing: -.5px; margin-top: 2px; }
+  .tile .val.neg { color: var(--bad); }
+  .tile .val.pos { color: var(--good); }
+  .tile .hint { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+  .tile .hint.warn { color: var(--bad); font-weight: 600; }
+  .tile input.val { width: 100%; border: 0; padding: 0; background: transparent; outline: none; }
+
+  /* ---------- card picker */
+  .pills { display: flex; gap: 10px; overflow-x: auto; padding: 2px 2px 12px; margin: 0 -2px 6px; scrollbar-width: thin; }
+  .pill { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 150px;
+    border: 1px solid var(--line); background: var(--surface); border-radius: 14px; padding: 10px 14px; text-align: left;
+    position: relative; overflow: hidden; }
+  .pill::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--c); }
+  .pill .pname { font-weight: 700; font-size: 13px; display: flex; gap: 6px; align-items: center; }
+  .pill .ptot { font-size: 18px; font-weight: 800; letter-spacing: -.3px; }
+  .pill.on { border-color: var(--c); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 18%, transparent); }
+  .pill.add { justify-content: center; align-items: center; color: var(--muted); font-weight: 600; min-width: 110px;
+    border-style: dashed; }
+  .pill.add::before { display: none; }
+  .badge { font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 999px; background: var(--good-soft);
+    color: var(--good); }
+
+  /* ---------- panels */
+  .panel { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+  .phead { padding: 18px 20px 14px; display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap;
+    border-top: 5px solid var(--c, var(--ink)); }
+  .phead .grow { flex: 1; min-width: 180px; }
+  .eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 700; }
+  .title-in { font-size: 22px; font-weight: 800; letter-spacing: -.4px; border: 0; background: transparent; padding: 2px 6px;
+    margin-left: -6px; border-radius: 8px; width: 100%; outline: none; }
+  .title-in:hover { background: var(--soft); }
+  .title-in:focus { background: var(--soft); box-shadow: 0 0 0 2px var(--accent-soft); }
+  .big { font-size: 30px; font-weight: 800; letter-spacing: -.8px; text-align: right; }
+  .big small { display: block; font-size: 12px; color: var(--muted); font-weight: 600; letter-spacing: 0; }
+  .pactions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .breakdown { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 20px 14px; }
+  .bk { font-size: 12px; padding: 4px 10px; border-radius: 999px; background: var(--soft); color: var(--ink2); font-weight: 600; }
+  .bk b { font-weight: 700; }
+  .pfoot { padding: 12px 20px; border-top: 1px solid var(--line); display: flex; justify-content: space-between;
+    align-items: center; gap: 10px; flex-wrap: wrap; }
+
+  /* ---------- add forms */
+  .addrow { display: flex; gap: 8px; padding: 12px 20px; background: var(--soft); border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line); flex-wrap: wrap; align-items: center; }
+  .addrow input { border: 1px solid var(--line); background: #fff; border-radius: 10px; padding: 9px 12px; outline: none; min-width: 0; }
+  .addrow input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .addrow .f-item { flex: 2 1 160px; }
+  .addrow .f-amt { flex: 0 1 110px; text-align: right; }
+  .addrow .f-date { flex: 0 1 150px; }
+  .whopick { display: flex; gap: 4px; flex-wrap: wrap; }
+  .whopick button { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 6px 11px; font-size: 12px;
+    font-weight: 600; color: var(--ink2); }
+  .whopick button.on { color: #fff; border-color: transparent; background: var(--w); }
+
+  /* ---------- rows */
+  .rows { }
+  .hrow, .row { display: grid; align-items: center; gap: 8px; padding: 0 20px; }
+  .hrow { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 700;
+    padding-top: 10px; padding-bottom: 6px; }
+  .row { border-top: 1px solid var(--line); min-height: 44px; }
+  .row:first-child { border-top: 0; }
+  .row:hover { background: #FBFBFD; }
+  .g-charge { grid-template-columns: 1fr 110px 108px 26px; }
+  .g-bill { grid-template-columns: 28px 1fr 96px 96px 28px 64px 22px; }
+  .key { border: 1px solid transparent; background: none; border-radius: 8px; width: 28px; height: 28px; padding: 0;
+    display: grid; place-items: center; color: #B8BEC9; }
+  .key:hover { background: var(--soft); color: var(--ink2); }
+  .key.has { color: var(--accent); }
+  .key.open { background: var(--accent-soft); color: var(--accent); }
+  .key svg { width: 15px; height: 15px; }
+  .login { margin: 0 20px 14px; padding: 14px 16px; border-radius: 12px; background: #F8F9FC; border: 1px solid var(--line);
+    display: grid; grid-template-columns: 82px 1fr; gap: 8px 12px; align-items: center; }
+  .row + .login { margin-top: 2px; }
+  .login label { font-size: 12px; font-weight: 700; color: var(--muted); }
+  .lf { display: flex; gap: 6px; align-items: center; min-width: 0; }
+  .lf .cell { flex: 1; margin: 0; background: #fff; border: 1px solid var(--line); padding: 7px 10px; }
+  .lf .cell:focus { border-color: var(--accent); }
+  .lf .btn { flex: 0 0 auto; }
+  .g-two { grid-template-columns: 1fr 110px 26px; }
+  .g-entry { grid-template-columns: 112px 1fr 104px 22px; }
+  .g-ro { grid-template-columns: 1fr 110px; }
+  .r { text-align: right; }
+  .cell { width: 100%; border: 0; background: transparent; padding: 7px 8px; margin: 0 -8px; border-radius: 8px; outline: none;
+    min-width: 0; }
+  .cell:hover { background: var(--soft); }
+  .cell:focus { background: #fff; box-shadow: 0 0 0 2px var(--accent); }
+  .amt { display: flex; align-items: center; justify-content: flex-end; }
+  .amt span { color: var(--muted); margin-right: 1px; }
+  .amt .cell { text-align: right; margin: 0; padding-left: 2px; width: 90px; }
+  .amt.neg .cell, .neg-txt { color: var(--bad); }
+  .amt.pos .cell { color: var(--good); }
+  .pos-txt { color: var(--good); }
+  .x { border: 0; background: none; color: #B8BEC9; font-size: 18px; line-height: 1; padding: 4px; border-radius: 6px; }
+  .x:hover { color: var(--bad); background: var(--bad-soft); }
+  select.who { appearance: none; -webkit-appearance: none; border: 0; border-radius: 999px; padding: 5px 12px; font-size: 12px;
+    font-weight: 700; text-align: center; background: color-mix(in srgb, var(--w) 14%, #fff); color: var(--w); width: 100%; }
+  .empty { padding: 26px 20px; color: var(--muted); text-align: center; }
+
+  /* ---------- bills */
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+  .check { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #CBD1DB; background: #fff; padding: 0;
+    display: grid; place-items: center; }
+  .check.on { background: var(--good); border-color: var(--good); }
+  .check.on::after { content: ""; width: 6px; height: 10px; border: solid #fff; border-width: 0 2px 2px 0;
+    transform: rotate(45deg) translate(-1px, -1px); }
+  .check.half { background: #FCC419; border-color: #FCC419; }
+  .check.half::after { content: ""; width: 8px; height: 2px; background: #fff; border-radius: 2px; }
+  .row.st-half, .row.st-half:hover { background: #FFF6D1; }
+  .row.st-paid, .row.st-paid:hover { background: #E3F5E7; }
+  .row.st-paid .cell, .row.st-half .cell { background: transparent; }
+  .legend { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); font-weight: 600; }
+  .legend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .move { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 4px 6px; font-size: 11px;
+    font-weight: 700; color: var(--ink2); white-space: nowrap; }
+  .move:hover { border-color: var(--accent); color: var(--accent); }
+  .bill-note { font-size: 11px; color: var(--muted); padding-left: 0; margin-top: -6px; padding-bottom: 6px; }
+
+  /* ---------- grids of panels */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; align-items: start; }
+  .bar { height: 6px; border-radius: 999px; background: var(--soft); overflow: hidden; margin-top: 8px; }
+  .bar i { display: block; height: 100%; background: var(--c, var(--accent)); border-radius: 999px; }
+  .bar.over i { background: var(--bad); }
+  .mini { display: flex; gap: 18px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .mini b { color: var(--ink); font-size: 14px; display: block; }
+
+  /* ---------- modal + toast */
+  #modal { position: fixed; inset: 0; background: rgba(16,24,40,.45); display: none; place-items: center; z-index: 50;
+    padding: 20px; }
+  #modal.on { display: grid; }
+  .mbox { background: #fff; border-radius: 18px; padding: 22px; width: 100%; max-width: 420px;
+    box-shadow: 0 20px 60px rgba(16,24,40,.25); }
+  .mbox h3 { margin: 0 0 6px; font-size: 18px; }
+  .mbox p { margin: 0 0 16px; color: var(--ink2); }
+  .mbox input { width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 12px;
+    outline: none; }
+  .mbox input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .swatches { display: flex; gap: 8px; margin-bottom: 16px; }
+  .swatches button { width: 28px; height: 28px; border-radius: 50%; border: 3px solid #fff; background: var(--c);
+    box-shadow: 0 0 0 1px var(--line); }
+  .swatches button.on { box-shadow: 0 0 0 2px var(--c); }
+  .mact { display: flex; justify-content: flex-end; gap: 8px; }
+  #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px); background: var(--ink);
+    color: #fff; padding: 12px 18px; border-radius: 12px; font-weight: 600; opacity: 0; transition: .2s; z-index: 60;
+    max-width: calc(100% - 32px); }
+  #toast.on { opacity: 1; transform: translateX(-50%); }
+  #toast a { color: #A5B8FF; }
+
+  .seg { display: none; }
+  body.locked nav, body.locked .top-right { display: none; }
+  .connect { max-width: 440px; margin: 40px auto; background: #fff; border-radius: 20px; box-shadow: var(--shadow); padding: 28px; }
+  .connect h1 { margin-bottom: 6px; }
+  .connect label { display: block; font-size: 12px; font-weight: 700; color: var(--muted); margin: 14px 0 6px; }
+  .connect input { width: 100%; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; outline: none; font-size: 15px; }
+  .connect input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .connect .btn { width: 100%; margin-top: 18px; padding: 12px; font-size: 15px; }
+  .connect .err { background: var(--bad-soft); color: var(--bad); border-radius: 10px; padding: 10px 12px; margin-top: 14px; font-weight: 600; }
+  .connect .help { font-size: 12.5px; color: var(--muted); margin-top: 16px; line-height: 1.5; }
+  .top-right .link { white-space: nowrap; }
+  @media (max-width: 820px) {
+    .cols { grid-template-columns: 1fr; }
+    .seg { display: flex; background: #E9ECF1; border-radius: 12px; padding: 4px; margin-bottom: 12px; position: sticky; top: 104px; z-index: 5; }
+    .seg button { flex: 1; border: 0; background: transparent; padding: 9px; border-radius: 9px; font-weight: 700; color: var(--muted); }
+    .seg button.on { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(16,24,40,.12); }
+    .seg button span { font-weight: 600; margin-left: 4px; }
+    .cols.bills[data-side="1st"] > section:nth-child(2), .cols.bills[data-side="15th"] > section:nth-child(1) { display: none; }
+    .phead { flex-wrap: nowrap; }
+    .phead .grow { min-width: 0; }
+    .tiles { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .tile { padding: 12px 14px; }
+    .tile .hint { font-size: 11px; }
+    .top-in { flex-wrap: wrap; gap: 10px; padding: 10px 14px; }
+    nav { order: 3; flex-basis: 100%; }
+    main { padding: 16px 12px 80px; }
+    .phead, .breakdown, .addrow, .hrow, .row, .pfoot { padding-left: 14px; padding-right: 14px; }
+    .g-charge { grid-template-columns: 1fr 92px 86px 24px; }
+    .g-bill { grid-template-columns: 26px 1fr 80px 80px 26px 56px 20px; }
+    .login { margin-left: 14px; margin-right: 14px; grid-template-columns: 1fr; gap: 4px; }
+    .login label { margin-top: 6px; }
+    .amt .cell { width: 74px; }
+    .big { font-size: 26px; }
+    .tile .val { font-size: 21px; }
+  }
+  @media (max-width: 480px) {
+    .g-bill { grid-template-columns: 26px 1fr 78px 26px 52px 20px; }
+    .g-bill .c-total { display: none; }
+  }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <div class="brand"><div class="logo">$</div>Bills</div>
+    <nav id="nav">
+      <button data-act="nav" data-v="cards">Cards</button>
+      <button data-act="nav" data-v="joint">Joint</button>
+      <button data-act="nav" data-v="bills">Monthly Bills</button>
+      <button data-act="nav" data-v="savings">Savings</button>
+      <button data-act="nav" data-v="christmas">Christmas</button>
+    </nav>
+    <div class="top-right">
+      <span id="status"></span>
+      <button class="btn small" data-act="backup">Back up</button>
+      <button class="link" data-act="logout" title="Forget the link and passcode on this device">Log out</button>
+    </div>
+  </div>
+</header>
+<main id="app"><div class="loading">Loading your bills…</div></main>
+<div id="modal"></div>
+<div id="toast"></div>
+
+<script>
+/* ======================================================================= basics */
+var WHO = ['Joint', 'Eric', 'Arianna', 'Split', 'Bills', 'Savings'];
+var WHO_COLOR = { Joint: '#E8590C', Eric: '#1C7ED6', Arianna: '#D6336C', Split: '#7048E8', Bills: '#495057', Savings: '#2B8A3E' };
+var PALETTE = { blue: '#4C6EF5', violet: '#845EF7', green: '#37B24D', orange: '#F76707', rose: '#E64980',
+                slate: '#868E96', teal: '#1098AD', gold: '#F59F00' };
+var S = null;                       // all data
+var view = remember('view') || 'cards';
+var selCard = remember('card');
+var lastWho = 'Joint';
+var billSide = remember('side') || '1st';
+var focusAfter = null;              // selector to focus after the next render
+var openLogin = {};                 // which bills/cards have their login section open
+var showPw = {};                    // which passwords are showing
+
+/* ---- connection to your Google script (link + passcode are kept only on this device) */
+var CONN = { url: remember('url'), key: remember('key') };
+function api(fn, extra) {
+  var req = { key: CONN.key, fn: fn };
+  if (extra) Object.keys(extra).forEach(function (k) { req[k] = extra[k]; });
+  return fetch(CONN.url, {
+    method: 'POST', body: JSON.stringify(req), redirect: 'follow', credentials: 'omit',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+  }).then(function (r) {
+    if (!r.ok) throw new Error('Google didn’t answer (' + r.status + ').');
+    return r.json();
+  }).then(function (j) {
+    if (!j.ok) { var e = new Error(j.error || 'Something went wrong.'); e.server = true; throw e; }
+    return j.data;
+  });
+}
+function authProblem(err) { return err && err.server && /^(PASSCODE|LOCKED|SETUP):/.test(err.message); }
+function cleanMsg(m) { return String(m || '').replace(/^(PASSCODE|LOCKED|SETUP):\s*/, ''); }
+function normalizeLink(v) {
+  v = String(v || '').trim();
+  if (/^AKfy[\w-]+$/.test(v)) return 'https://script.google.com/macros/s/' + v + '/exec';
+  v = v.replace(/\/u\/\d+\//, '/').replace(/\/a\/[^/]+\/macros\//, '/macros/').replace(/[?#].*$/, '').replace(/\/dev$/, '/exec');
+  return /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(v) ? v : null;
+}
+
+function remember(k) { try { return localStorage.getItem('bills.' + k); } catch (e) { return null; } }
+function store(k, v) { try { localStorage.setItem('bills.' + k, v); } catch (e) {} }
+function forget(k) { try { localStorage.removeItem('bills.' + k); } catch (e) {} }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+  return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function r2(n) { n = +n || 0; return Math.round(Math.abs(n) * 100 + 1e-6) / 100 * (n < 0 ? -1 : 1); }
+function money(n) { n = r2(n);
+  return (n < 0 ? '-' : '') + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function plain(n) { return r2(n).toFixed(2); }
+function parseAmt(v) { var n = parseFloat(String(v).replace(/[$,\s]/g, '')); return isNaN(n) ? null : Math.round(n * 100) / 100; }
+function sum(list, f) { return list.reduce(function (a, x) { return a + (+f(x) || 0); }, 0); }
+function uid(p) { return p + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+function byOrder(a, b) { return (+a.order || 0) - (+b.order || 0); }
+function nextOrder(list) { return list.reduce(function (m, r) { return Math.max(m, +r.order || 0); }, 0) + 1; }
+function col(name) { return PALETTE[name] || PALETTE.slate; }
+function setting(id, dflt) { var s = S.Settings.filter(function (x) { return x.id === id; })[0]; return s ? s.value : dflt; }
+
+/* ======================================================================= saving */
+var queue = [], busy = false, fails = 0;
+function status(text, err) { var el = document.getElementById('status'); el.textContent = text; el.className = err ? 'err' : ''; }
+function send(ops) { queue = queue.concat(ops); flush(); }
+function flush() {
+  if (busy || !queue.length) return;
+  busy = true;
+  var batch = queue; queue = [];
+  status('Saving…');
+  api('apply', { ops: batch }).then(function () {
+    busy = false; fails = 0; if (queue.length) flush(); else status('All changes saved');
+  }, function (e) {
+    busy = false; fails++;
+    queue = batch.concat(queue);
+    if (authProblem(e)) { status('Not saved', true); showConnect(cleanMsg(e.message)); return; }
+    if (fails >= 5) { status('Not saved. Check your connection and reload.', true); return; }
+    status('Couldn’t save, retrying…', true);
+    setTimeout(flush, 1500 * fails);
+  });
+}
+window.addEventListener('beforeunload', function (e) { if (busy || queue.length) { e.preventDefault(); e.returnValue = ''; } });
+
+function upsert(table, row) {
+  var list = S[table], i = -1;
+  for (var k = 0; k < list.length; k++) if (list[k].id === row.id) { i = k; break; }
+  if (i >= 0) { Object.keys(row).forEach(function (f) { list[i][f] = row[f]; }); row = list[i]; }
+  else list.push(row);
+  send([{ op: 'upsert', table: table, row: JSON.parse(JSON.stringify(row)) }]);
+}
+function removeRow(table, id) {
+  S[table] = S[table].filter(function (r) { return r.id !== id; });
+  send([{ op: 'remove', table: table, id: id }]);
+}
+function removeWhere(table, field, value) {
+  S[table] = S[table].filter(function (r) { return String(r[field]) !== String(value); });
+  send([{ op: 'removeWhere', table: table, field: field, value: value }]);
+}
+
+/* ======================================================================= math */
+function calc() {
+  var tag = {};
+  WHO.forEach(function (w) { tag[w] = sum(S.Charges.filter(function (c) { return c.who === w; }), function (c) { return c.amount; }); });
+  var onCards = sum(S.Charges, function (c) { return c.amount; });
+  var tagged = sum(WHO, function (w) { return tag[w]; });
+  var inJoint = sum(S.Joint, function (j) { return j.amount; });
+  var b1 = S.Bills.filter(function (b) { return b.payOn === '1st'; });
+  var b15 = S.Bills.filter(function (b) { return b.payOn === '15th'; });
+  var us1 = sum(b1, function (b) { return b.us; }), us15 = sum(b15, function (b) { return b.us; });
+  var ourTotal = us1 + us15, half = ourTotal / 2;
+  return {
+    tag: tag, onCards: onCards, untagged: Math.round((onCards - tagged) * 100) / 100,
+    eric: tag.Eric + tag.Split / 2, arianna: tag.Arianna + tag.Split / 2,
+    inJoint: inJoint, jointLeft: inJoint - tag.Joint,
+    us1: us1, us15: us15, tot1: sum(b1, function (b) { return b.total; }), tot15: sum(b15, function (b) { return b.total; }),
+    ourTotal: ourTotal, half: half, paycheck: half / 2, bank: half - us15,
+    ferris: sum(S.Bills, function (b) { return b.total; }) - ourTotal,
+    unpaid: ourTotal - sum(S.Bills.filter(function (b) { return b.status === 'paid'; }), function (b) { return b.us; })
+  };
+}
+
+/* ======================================================================= pieces */
+function tile(label, value, opts) {
+  opts = opts || {};
+  var cls = opts.sign && value < 0 ? ' neg' : '';
+  return '<div class="tile' + (opts.act ? ' click' : '') + '"' + (opts.act ? ' data-act="nav" data-v="' + opts.act + '"' : '') + '>' +
+    '<div class="lbl">' + esc(label) + '</div><div class="val num' + cls + '">' + money(value) + '</div>' +
+    (opts.hint ? '<div class="hint' + (opts.warn ? ' warn' : '') + '">' + esc(opts.hint) + '</div>' : '') + '</div>';
+}
+function amtCell(table, id, field, value, extraCls) {
+  return '<div class="amt' + (value < 0 ? ' neg' : '') + (extraCls ? ' ' + extraCls : '') + '"><span>$</span>' +
+    '<input class="cell num" inputmode="decimal" data-t="' + table + '" data-id="' + id + '" data-f="' + field +
+    '" value="' + plain(value) + '"></div>';
+}
+function textCell(table, id, field, value, ph, cls) {
+  return '<input class="cell' + (cls ? ' ' + cls : '') + '" data-t="' + table + '" data-id="' + id + '" data-f="' + field + '" value="' + esc(value) +
+    '" placeholder="' + esc(ph || '') + '">';
+}
+function whoSelect(c) {
+  return '<select class="who" style="--w:' + WHO_COLOR[c.who] + '" data-t="Charges" data-id="' + c.id + '" data-f="who">' +
+    WHO.map(function (w) { return '<option' + (w === c.who ? ' selected' : '') + '>' + w + '</option>'; }).join('') + '</select>';
+}
+
+var KEY_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 21 2M16 7l3 3M18.5 4.5l2 2"/></svg>';
+function hasLogin(r) { return !!(r.url || r.username || r.password); }
+function keyButton(table, r) {
+  return '<button class="key' + (hasLogin(r) ? ' has' : '') + (openLogin[r.id] ? ' open' : '') + '" title="Website, username and password" data-act="login" data-t="' + table + '" data-id="' + r.id + '">' + KEY_SVG + '</button>';
+}
+function fixUrl(u) { u = String(u || '').trim(); return !u ? '' : /^https?:\/\//i.test(u) ? u : 'https://' + u; }
+function loginBox(table, r) {
+  var f = function (field, ph, type) {
+    return '<input class="cell" type="' + (type || 'text') + '" autocomplete="off" data-t="' + table + '" data-id="' + r.id + '" data-f="' + field + '" value="' + esc(r[field]) + '" placeholder="' + esc(ph) + '">';
+  };
+  return '<div class="login">' +
+    '<label>Website</label><div class="lf">' + f('url', 'e.g. nationalgrid.com') +
+      (r.url ? '<a class="btn small" href="' + esc(fixUrl(r.url)) + '" target="_blank" rel="noopener">Open</a>' : '') + '</div>' +
+    '<label>Username</label><div class="lf">' + f('username', 'Username or email') +
+      '<button class="btn small" data-act="copy" data-t="' + table + '" data-id="' + r.id + '" data-f="username">Copy</button></div>' +
+    '<label>Password</label><div class="lf">' + f('password', 'Password', showPw[r.id] ? 'text' : 'password') +
+      '<button class="btn small" data-act="showpw" data-id="' + r.id + '">' + (showPw[r.id] ? 'Hide' : 'Show') + '</button>' +
+      '<button class="btn small" data-act="copy" data-t="' + table + '" data-id="' + r.id + '" data-f="password">Copy</button></div>' +
+    '</div>';
+}
+function copyText(text) {
+  function fallback() {
+    var t = document.createElement('textarea'); t.value = text; t.style.position = 'fixed'; t.style.opacity = '0';
+    document.body.appendChild(t); t.select();
+    var ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(t); toast(ok ? 'Copied' : 'Couldn’t copy. Tap Show and copy it by hand.');
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function () { toast('Copied'); }, fallback);
+  } else fallback();
+}
+
+/* ======================================================================= views */
+function viewCards(m) {
+  var cards = S.Cards.slice().sort(byOrder);
+  if (!cards.some(function (c) { return c.id === selCard; })) selCard = cards.length ? cards[0].id : null;
+  var h = '<h1>Cards</h1><p class="sub">Tag each charge with who it belongs to. Everything adds up on its own.</p>';
+  h += '<div class="tiles">' +
+    tile('Eric owes', m.eric, { hint: 'His charges + half of Split' }) +
+    tile('Arianna owes', m.arianna, { hint: 'Her charges + half of Split' }) +
+    tile('Joint money left', m.jointLeft, { sign: true, act: 'joint', hint: 'Tap to change what’s in the joint' }) +
+    tile('Bills on cards', m.tag.Bills, { hint: 'Already in the monthly budget' }) +
+    tile('Total on all cards', m.onCards, { hint: m.untagged ? money(m.untagged) + ' has no Who' : 'Every charge is tagged', warn: !!m.untagged }) +
+    '</div>';
+
+  h += '<div class="pills">';
+  cards.forEach(function (c) {
+    var t = sum(S.Charges.filter(function (x) { return x.cardId === c.id; }), function (x) { return x.amount; });
+    h += '<button class="pill' + (c.id === selCard ? ' on' : '') + '" style="--c:' + col(c.color) + '" data-act="card" data-id="' + c.id + '">' +
+      '<span class="pname">' + esc(c.name) + (c.paid ? ' <span class="badge">Paid</span>' : '') + '</span>' +
+      '<span class="ptot num">' + money(t) + '</span></button>';
+  });
+  h += '<button class="pill add" data-act="addcard">+ Add card</button></div>';
+
+  var card = cards.filter(function (c) { return c.id === selCard; })[0];
+  if (!card) return h + '<div class="panel"><div class="empty">Add your first card to get started.</div></div>';
+  var items = S.Charges.filter(function (x) { return x.cardId === card.id; }).sort(byOrder).reverse();
+  var total = sum(items, function (x) { return x.amount; });
+
+  h += '<section class="panel" style="--c:' + col(card.color) + '"><div class="phead">' +
+    '<div class="grow"><div class="eyebrow">Card</div>' + textCell('Cards', card.id, 'name', card.name, '', 'title-in') +
+    '<button class="btn small" style="margin-top:6px" data-act="login" data-t="Cards" data-id="' + card.id + '">' + KEY_SVG.replace('<svg', '<svg style="width:13px;height:13px;vertical-align:-2px;margin-right:5px"') + (openLogin[card.id] ? 'Hide login' : 'Login info' + (hasLogin(card) ? ' ✓' : '')) + '</button></div>' +
+    '<div class="big num">' + money(total) + '<small>' + items.length + ' charge' + (items.length === 1 ? '' : 's') + '</small></div>' +
+    '</div>';
+  if (openLogin[card.id]) h += loginBox('Cards', card);
+  var parts = WHO.map(function (w) {
+    var t = sum(items.filter(function (x) { return x.who === w; }), function (x) { return x.amount; });
+    return t ? '<span class="bk" style="color:' + WHO_COLOR[w] + '">' + w + ' <b>' + money(t) + '</b></span>' : '';
+  }).join('');
+  if (parts) h += '<div class="breakdown">' + parts + '</div>';
+
+  h += '<form class="addrow" data-form="charge" data-card="' + card.id + '">' +
+    '<input class="f-item" name="item" placeholder="What was it?" autocomplete="off" id="add-item">' +
+    '<input class="f-amt num" name="amount" placeholder="0.00" inputmode="decimal" autocomplete="off">' +
+    '<div class="whopick">' + WHO.map(function (w) {
+      return '<button type="button" style="--w:' + WHO_COLOR[w] + '" class="' + (w === lastWho ? 'on' : '') + '" data-act="pickwho" data-w="' + w + '">' + w + '</button>';
+    }).join('') + '</div>' +
+    '<button class="btn primary" type="submit">Add</button></form>';
+
+  if (items.length) {
+    h += '<div class="hrow g-charge"><div>Item</div><div class="r">Amount</div><div style="text-align:center">Who</div><div></div></div><div class="rows">';
+    items.forEach(function (x) {
+      h += '<div class="row g-charge">' + textCell('Charges', x.id, 'item', x.item) + amtCell('Charges', x.id, 'amount', x.amount) +
+        whoSelect(x) + '<button class="x" title="Delete" data-act="del" data-t="Charges" data-id="' + x.id + '">×</button></div>';
+    });
+    h += '</div>';
+  } else {
+    h += '<div class="empty">No charges on this card.</div>';
+  }
+  h += '<div class="pfoot"><div class="pactions">' +
+    '<button class="btn' + (card.paid ? ' primary' : '') + '" data-act="paid" data-id="' + card.id + '">' + (card.paid ? '✓ Paid' : 'Mark as paid') + '</button>' +
+    '<button class="btn" data-act="clearcard" data-id="' + card.id + '"' + (items.length ? '' : ' disabled') + '>Clear charges</button>' +
+    '</div><button class="link danger" data-act="delcard" data-id="' + card.id + '">Delete this card</button></div></section>';
+  return h;
+}
+
+function viewJoint(m) {
+  var h = '<h1>Joint Account</h1><p class="sub">Change what’s in the joint account any time. Joint charges come from the Cards tab.</p>';
+  h += '<div class="tiles">' + tile('In the joint account', m.inJoint) + tile('Joint charges on cards', m.tag.Joint) +
+    tile('Left', m.jointLeft, { sign: true }) + '</div>';
+  var rows = S.Joint.slice().sort(byOrder);
+  h += '<div class="cols"><section class="panel" style="--c:#E8590C"><div class="phead"><div class="grow"><div class="eyebrow">Money in</div>' +
+    '<div style="font-size:20px;font-weight:800">What’s in the joint</div></div><div class="big num">' + money(m.inJoint) + '</div></div>';
+  h += '<div class="rows">' + (rows.length ? rows.map(function (j) {
+    return '<div class="row g-two">' + textCell('Joint', j.id, 'item', j.item) + amtCell('Joint', j.id, 'amount', j.amount) +
+      '<button class="x" data-act="del" data-t="Joint" data-id="' + j.id + '">×</button></div>';
+  }).join('') : '<div class="empty">Nothing in the joint yet.</div>') + '</div>';
+  h += '<form class="addrow" data-form="joint"><input class="f-item" name="item" placeholder="e.g. Groceries, extra 50" id="add-joint" autocomplete="off">' +
+    '<input class="f-amt num" name="amount" placeholder="0.00" inputmode="decimal" autocomplete="off"><button class="btn primary">Add</button></form></section>';
+
+  var cards = {}; S.Cards.forEach(function (c) { cards[c.id] = c; });
+  var jc = S.Charges.filter(function (c) { return c.who === 'Joint'; });
+  h += '<section class="panel" style="--c:#868E96"><div class="phead"><div class="grow"><div class="eyebrow">Money out</div>' +
+    '<div style="font-size:20px;font-weight:800">Joint charges on cards</div></div><div class="big num">' + money(m.tag.Joint) + '</div></div><div class="rows">';
+  h += jc.length ? jc.map(function (c) {
+    var card = cards[c.cardId] || { name: '?', color: 'slate' };
+    return '<div class="row g-ro"><div><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + col(card.color) +
+      ';margin-right:8px"></span>' + esc(c.item) + ' <span style="color:var(--muted);font-size:12px">· ' + esc(card.name) + '</span></div>' +
+      '<div class="r num' + (c.amount < 0 ? ' neg-txt' : '') + '">' + money(c.amount) + '</div></div>';
+  }).join('') : '<div class="empty">No joint charges.</div>';
+  h += '</div></section></div>';
+  return h;
+}
+
+function billColumn(payOn, color, m) {
+  var other = payOn === '1st' ? '15th' : '1st';
+  var rows = S.Bills.filter(function (b) { return b.payOn === payOn; }).sort(byOrder);
+  var us = payOn === '1st' ? m.us1 : m.us15, tot = payOn === '1st' ? m.tot1 : m.tot15;
+  var left = rows.filter(function (b) { return b.status !== 'paid'; }).length;
+  var halfway = rows.filter(function (b) { return b.status === 'half'; }).length;
+  var h = '<section class="panel" style="--c:' + color + '"><div class="phead"><div class="grow"><div class="eyebrow">Paid on the</div>' +
+    '<div style="font-size:26px;font-weight:800;letter-spacing:-.5px">' + payOn + '</div></div>' +
+    '<div class="big num">' + money(us) + '<small>our part · ' + money(tot) + ' total</small></div></div>';
+  h += '<div class="breakdown"><span class="bk">' + (left ? left + ' not paid yet' : 'All paid') + '</span>' +
+    (halfway ? '<span class="bk" style="background:#FFF3BF;color:#8F6A00">' + halfway + ' yellow</span>' : '') +
+    (rows.some(function (b) { return b.status; }) ? '<button class="link" data-act="uncheck" data-p="' + payOn + '">Clear all colors for next month</button>' : '') + '</div>';
+  h += '<div class="hrow g-bill"><div></div><div>Bill</div><div class="r c-total">Total</div><div class="r">Our part</div><div></div><div></div><div></div></div><div class="rows">';
+  rows.forEach(function (b) {
+    var st = b.status === 'paid' ? ' st-paid' : b.status === 'half' ? ' st-half' : '';
+    h += '<div class="row g-bill' + st + '">' +
+      '<button class="check' + (b.status === 'paid' ? ' on' : b.status === 'half' ? ' half' : '') + '" title="Tap: yellow, tap again: green, again: clear" data-act="billpaid" data-id="' + b.id + '"></button>' +
+      '<div>' + textCell('Bills', b.id, 'name', b.name) + (b.note ? '<div class="bill-note">' + esc(b.note) + '</div>' : '') + '</div>' +
+      amtCell('Bills', b.id, 'total', b.total, 'c-total') + amtCell('Bills', b.id, 'us', b.us) + keyButton('Bills', b) +
+      '<button class="move" data-act="move" data-id="' + b.id + '" title="Move to the ' + other + '">' + (payOn === '1st' ? 'to 15th →' : '← to 1st') + '</button>' +
+      '<button class="x" data-act="del" data-t="Bills" data-id="' + b.id + '">×</button></div>';
+    if (openLogin[b.id]) h += loginBox('Bills', b);
+  });
+  if (!rows.length) h += '<div class="empty">No bills on the ' + payOn + '.</div>';
+  h += '</div><form class="addrow" data-form="bill" data-p="' + payOn + '">' +
+    '<input class="f-item" name="name" placeholder="New bill" id="add-bill-' + payOn + '" autocomplete="off">' +
+    '<input class="f-amt num" name="total" placeholder="Total" inputmode="decimal" autocomplete="off">' +
+    '<input class="f-amt num" name="us" placeholder="Our part" inputmode="decimal" autocomplete="off">' +
+    '<button class="btn primary">Add</button></form></section>';
+  return h;
+}
+
+function viewBills(m) {
+  var h = '<h1>Monthly Bills</h1><p class="sub">Tap a bill’s circle once to turn it yellow, again to turn it green, and once more to clear it. Use the arrow to move a bill between the 1st and the 15th.</p>';
+  h += '<div class="tiles">' +
+    tile('Our total', m.ourTotal, { hint: '1st + 15th, our part' }) +
+    tile('Each person’s half', m.half) +
+    tile('Each paycheck', m.paycheck) +
+    tile('Put in bank', m.bank, { hint: 'Half minus the 15th bills' }) +
+    tile('Ferris pays', m.ferris) +
+    tile('Still unpaid', m.unpaid, { hint: 'Our part' }) + '</div>';
+  h += '<div class="seg">' + ['1st', '15th'].map(function (p) {
+    return '<button class="' + (p === billSide ? 'on' : '') + '" data-act="side" data-p="' + p + '">' + p + ' <span class="num">' + money(p === '1st' ? m.us1 : m.us15) + '</span></button>';
+  }).join('') + '</div>';
+  h += '<div class="cols bills" data-side="' + billSide + '">' + billColumn('1st', '#1098AD', m) + billColumn('15th', '#F59F00', m) + '</div>';
+  return h;
+}
+
+function viewSavings() {
+  var funds = S.Funds.slice().sort(byOrder);
+  var total = sum(S.FundEntries, function (e) { return e.amount; });
+  var h = '<h1>Specialty Savings</h1><p class="sub">Add money in or take money out of each fund.</p>';
+  h += '<div class="tiles">' + tile('Total in savings', total);
+  funds.slice(0, 3).forEach(function (f) {
+    h += tile(f.name, sum(S.FundEntries.filter(function (e) { return e.fundId === f.id; }), function (e) { return e.amount; }));
+  });
+  h += '</div><div class="grid">';
+  funds.forEach(function (f) {
+    var es = S.FundEntries.filter(function (e) { return e.fundId === f.id; }).sort(byOrder).reverse();
+    var bal = sum(es, function (e) { return e.amount; });
+    h += '<section class="panel" style="--c:' + col(f.color) + '"><div class="phead"><div class="grow"><div class="eyebrow">Fund</div>' +
+      textCell('Funds', f.id, 'name', f.name, '', 'title-in') + '</div><div class="big num">' + money(bal) + '</div></div>';
+    h += '<form class="addrow" data-form="entry" data-fund="' + f.id + '">' +
+      '<input class="f-date" type="date" name="date" value="' + today() + '">' +
+      '<input class="f-amt num" name="amount" placeholder="0.00" inputmode="decimal" autocomplete="off">' +
+      '<input class="f-item" name="note" placeholder="Note (optional)" autocomplete="off">' +
+      '<button class="btn primary" data-dir="in">+ In</button><button class="btn" data-dir="out">− Out</button></form>';
+    h += '<div class="rows">' + (es.length ? es.map(function (e) {
+      return '<div class="row g-entry"><input class="cell" type="date" data-t="FundEntries" data-id="' + e.id + '" data-f="date" value="' + esc(e.date) + '">' +
+        textCell('FundEntries', e.id, 'note', e.note, '—') + amtCell('FundEntries', e.id, 'amount', e.amount, e.amount >= 0 ? 'pos' : '') +
+        '<button class="x" data-act="del" data-t="FundEntries" data-id="' + e.id + '">×</button></div>';
+    }).join('') : '<div class="empty">Nothing here yet.</div>') + '</div>';
+    h += '<div class="pfoot"><span></span><button class="link danger" data-act="delfund" data-id="' + f.id + '">Delete fund</button></div></section>';
+  });
+  h += '<section class="panel"><div class="empty"><button class="btn" data-act="addfund">+ Add a fund</button></div></section></div>';
+  return h;
+}
+
+function viewChristmas() {
+  var people = S.People.slice().sort(byOrder);
+  var budget = parseAmt(setting('christmasBudget', '0')) || 0;
+  var spent = sum(S.Gifts, function (g) { return g.amount; });
+  var perPerson = sum(people, function (p) { return p.budget; });
+  var h = '<h1>Christmas</h1><p class="sub">Each person’s budget, what’s been spent, and what’s left.</p>';
+  h += '<div class="tiles"><div class="tile"><div class="lbl">Overall budget</div><div class="amt" style="justify-content:flex-start">' +
+    '<span style="font-size:24px;font-weight:800">$</span><input class="cell num val" style="font-size:24px;font-weight:800;width:140px;text-align:left" inputmode="decimal" data-t="Settings" data-id="christmasBudget" data-f="value" value="' + plain(budget) + '"></div>' +
+    '<div class="hint' + (perPerson > budget ? ' warn' : '') + '">Person budgets add up to ' + money(perPerson) + '</div></div>' +
+    tile('Spent so far', spent) + tile('Left', budget - spent, { sign: true }) + '</div><div class="grid">';
+  people.forEach(function (p) {
+    var gs = S.Gifts.filter(function (g) { return g.personId === p.id; }).sort(byOrder);
+    var sp = sum(gs, function (g) { return g.amount; }), left = p.budget - sp;
+    var pct = p.budget ? Math.min(100, Math.max(0, sp / p.budget * 100)) : (sp ? 100 : 0);
+    h += '<section class="panel" style="--c:#E03131"><div class="phead"><div class="grow"><div class="eyebrow">Gifts for</div>' +
+      textCell('People', p.id, 'name', p.name, '', 'title-in') +
+      '<div class="mini"><div>Budget<b>' + '<span class="amt" style="justify-content:flex-start;display:inline-flex"><span>$</span><input class="cell num" style="width:70px;text-align:left;font-weight:700;padding:0 2px;margin:0" inputmode="decimal" data-t="People" data-id="' + p.id + '" data-f="budget" value="' + plain(p.budget) + '"></span></b></div>' +
+      '<div>Spent<b class="num">' + money(sp) + '</b></div><div>Left<b class="num' + (left < 0 ? ' neg-txt' : '') + '">' + money(left) + '</b></div></div>' +
+      '<div class="bar' + (left < 0 ? ' over' : '') + '"><i style="width:' + pct + '%"></i></div></div></div>';
+    h += '<div class="rows">' + gs.map(function (g) {
+      return '<div class="row g-two">' + textCell('Gifts', g.id, 'item', g.item) + amtCell('Gifts', g.id, 'amount', g.amount) +
+        '<button class="x" data-act="del" data-t="Gifts" data-id="' + g.id + '">×</button></div>';
+    }).join('') + '</div>';
+    h += '<form class="addrow" data-form="gift" data-person="' + p.id + '"><input class="f-item" name="item" placeholder="Add a gift" autocomplete="off">' +
+      '<input class="f-amt num" name="amount" placeholder="0.00" inputmode="decimal" autocomplete="off"><button class="btn primary">Add</button></form>' +
+      '<div class="pfoot"><span></span><button class="link danger" data-act="delperson" data-id="' + p.id + '">Remove person</button></div></section>';
+  });
+  h += '<section class="panel"><div class="empty"><button class="btn" data-act="addperson">+ Add a person</button></div></section></div>';
+  return h;
+}
+
+function today() { var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+
+/* ======================================================================= render */
+function render() {
+  var m = calc();
+  var views = { cards: viewCards, joint: viewJoint, bills: viewBills, savings: viewSavings, christmas: viewChristmas };
+  if (!views[view]) view = 'cards';
+  document.getElementById('app').innerHTML = views[view](m);
+  Array.prototype.forEach.call(document.querySelectorAll('nav button'), function (b) { b.classList.toggle('on', b.dataset.v === view); });
+  if (focusAfter) { var el = document.querySelector(focusAfter); if (el) el.focus(); focusAfter = null; }
+}
+
+/* ======================================================================= modal + toast */
+function modal(html) {
+  var el = document.getElementById('modal'); el.innerHTML = '<div class="mbox">' + html + '</div>'; el.classList.add('on');
+  return el;
+}
+function closeModal() { var el = document.getElementById('modal'); el.classList.remove('on'); el.innerHTML = ''; }
+function confirmBox(title, text, ok, cb) {
+  var el = modal('<h3>' + esc(title) + '</h3><p>' + esc(text) + '</p><div class="mact"><button class="btn" data-m="no">Cancel</button>' +
+    '<button class="btn danger solid" data-m="yes">' + esc(ok) + '</button></div>');
+  el.onclick = function (e) {
+    var b = e.target.closest('[data-m]'); if (!b && e.target !== el) return;
+    closeModal(); if (b && b.dataset.m === 'yes') cb();
+  };
+}
+function askName(title, ph, withColor, cb) {
+  var chosen = 'blue';
+  var el = modal('<h3>' + esc(title) + '</h3><form id="mform"><input name="n" placeholder="' + esc(ph) + '" autocomplete="off">' +
+    (withColor ? '<div class="swatches">' + Object.keys(PALETTE).map(function (k) {
+      return '<button type="button" data-c="' + k + '" style="--c:' + PALETTE[k] + '" class="' + (k === chosen ? 'on' : '') + '"></button>'; }).join('') + '</div>' : '') +
+    '<div class="mact"><button type="button" class="btn" data-m="no">Cancel</button><button class="btn primary">Add</button></div></form>');
+  var input = el.querySelector('input'); input.focus();
+  el.onclick = function (e) {
+    var sw = e.target.closest('[data-c]');
+    if (sw) { chosen = sw.dataset.c; Array.prototype.forEach.call(el.querySelectorAll('[data-c]'), function (b) { b.classList.toggle('on', b === sw); }); return; }
+    if (e.target.closest('[data-m="no"]') || e.target === el) closeModal();
+  };
+  el.querySelector('#mform').onsubmit = function (e) {
+    e.preventDefault(); var v = input.value.trim(); if (!v) return; closeModal(); cb(v, chosen);
+  };
+}
+var toastTimer;
+function toast(html, ms) {
+  var t = document.getElementById('toast'); t.innerHTML = html; t.classList.add('on');
+  clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.classList.remove('on'); }, ms || 3500);
+}
+
+/* ======================================================================= events */
+document.addEventListener('click', function (e) {
+  var b = e.target.closest('[data-act]'); if (!b || !S) return;
+  var a = b.dataset.act, id = b.dataset.id;
+  if (a === 'nav') { view = b.dataset.v; store('view', view); render(); window.scrollTo(0, 0); }
+  else if (a === 'login') { openLogin[id] = !openLogin[id]; render(); }
+  else if (a === 'showpw') { showPw[id] = !showPw[id]; render(); }
+  else if (a === 'copy') { var cr = find(b.dataset.t, id); if (cr && cr[b.dataset.f]) copyText(cr[b.dataset.f]); else toast('Nothing to copy yet'); }
+  else if (a === 'side') { billSide = b.dataset.p; store('side', billSide); render(); }
+  else if (a === 'card') { selCard = id; store('card', id); render(); }
+  else if (a === 'pickwho') { lastWho = b.dataset.w; Array.prototype.forEach.call(b.parentNode.children, function (x) { x.classList.toggle('on', x === b); }); }
+  else if (a === 'del') { removeRow(b.dataset.t, id); render(); }
+  else if (a === 'paid') { var c = find('Cards', id); upsert('Cards', { id: id, paid: !c.paid }); render(); }
+  else if (a === 'clearcard') {
+    var cc = find('Cards', id), n = S.Charges.filter(function (x) { return x.cardId === id; }).length;
+    confirmBox('Clear ' + cc.name + '?', 'This deletes its ' + n + ' charge' + (n === 1 ? '' : 's') + ' and sets it back to unpaid. Do this after you’ve paid the card.', 'Clear charges', function () {
+      removeWhere('Charges', 'cardId', id); upsert('Cards', { id: id, paid: false }); render(); toast(esc(cc.name) + ' cleared');
+    });
+  }
+  else if (a === 'delcard') {
+    var dc = find('Cards', id);
+    confirmBox('Delete ' + dc.name + '?', 'The card and all its charges will be removed.', 'Delete card', function () {
+      removeWhere('Charges', 'cardId', id); removeRow('Cards', id); selCard = null; render();
+    });
+  }
+  else if (a === 'addcard') {
+    askName('Add a card', 'Card name', true, function (name, color) {
+      var c = { id: uid('card'), name: name, color: color, paid: false, order: nextOrder(S.Cards) };
+      upsert('Cards', c); selCard = c.id; store('card', c.id); focusAfter = '#add-item'; render();
+    });
+  }
+  else if (a === 'billpaid') {
+    var bl = find('Bills', id), nextSt = bl.status === 'half' ? 'paid' : bl.status === 'paid' ? '' : 'half';
+    upsert('Bills', { id: id, status: nextSt, paid: nextSt === 'paid' }); render();
+  }
+  else if (a === 'move') { var mv = find('Bills', id); upsert('Bills', { id: id, payOn: mv.payOn === '1st' ? '15th' : '1st', order: nextOrder(S.Bills) }); render(); }
+  else if (a === 'uncheck') {
+    S.Bills.filter(function (x) { return x.payOn === b.dataset.p && x.status; }).forEach(function (x) { upsert('Bills', { id: x.id, status: '', paid: false }); });
+    render();
+  }
+  else if (a === 'addfund') {
+    askName('Add a fund', 'Fund name', true, function (name, color) { upsert('Funds', { id: uid('f'), name: name, color: color, order: nextOrder(S.Funds) }); render(); });
+  }
+  else if (a === 'delfund') {
+    var f = find('Funds', id);
+    confirmBox('Delete ' + f.name + '?', 'The fund and its history will be removed.', 'Delete fund', function () {
+      removeWhere('FundEntries', 'fundId', id); removeRow('Funds', id); render();
+    });
+  }
+  else if (a === 'addperson') {
+    askName('Add a person', 'Name', false, function (name) { upsert('People', { id: uid('p'), name: name, budget: 0, order: nextOrder(S.People) }); render(); });
+  }
+  else if (a === 'delperson') {
+    var p = find('People', id);
+    confirmBox('Remove ' + p.name + '?', 'Their gifts will be removed too.', 'Remove', function () {
+      removeWhere('Gifts', 'personId', id); removeRow('People', id); render();
+    });
+  }
+  else if (a === 'backup') {
+    toast('Making a backup copy…', 8000);
+    api('backup').then(function (r) {
+      toast('Backup saved to your Google Drive: <a href="' + esc(r.url) + '" target="_blank" rel="noopener">' + esc(r.name) + '</a>', 7000);
+    }, function () { toast('Backup failed. Try again in a minute.'); });
+  }
+  else if (a === 'logout') {
+    confirmBox('Log out on this device?', 'This forgets the app link and passcode on this device only. Your bills stay safe in your Google Sheet.', 'Log out', function () {
+      forget('url'); forget('key'); CONN = { url: null, key: null }; S = null; showConnect();
+    });
+  }
+});
+
+function find(table, id) { return S[table].filter(function (r) { return r.id === id; })[0]; }
+
+document.addEventListener('change', function (e) {
+  var el = e.target; if (!el.dataset || !el.dataset.t || !el.dataset.id) return;
+  var t = el.dataset.t, f = el.dataset.f, id = el.dataset.id, v = el.value;
+  if (f === 'amount' || f === 'total' || f === 'us' || f === 'budget' || (t === 'Settings' && f === 'value')) {
+    var n = parseAmt(v);
+    if (n === null) { render(); return; }
+    v = t === 'Settings' ? String(n) : n;
+  } else if (f === 'password') {
+    // keep passwords exactly as typed
+  } else if (f !== 'who' && f !== 'date') {
+    v = v.trim();
+    if (!v && (f === 'name')) { render(); return; }
+  }
+  var row = { id: id }; row[f] = v;
+  if (t === 'Settings' && !find('Settings', id)) S.Settings.push({ id: id, value: '' });
+  upsert(t, row);
+  render();
+});
+
+document.addEventListener('submit', function (e) {
+  var form = e.target; if (!form.dataset.form) return;
+  e.preventDefault();
+  if (form.dataset.form === 'connect') {
+    var link = normalizeLink(form.querySelector('[name="link"]').value), key = form.querySelector('[name="key"]').value;
+    if (!link) { showConnect('That doesn’t look like your app link. It should end in /exec, or paste the Deployment ID that starts with AKfy.'); return; }
+    if (!key) { CONN.url = link; showConnect('Type your passcode.'); return; }
+    CONN = { url: link, key: key };
+    load();
+    return;
+  }
+  var k = form.dataset.form, val = function (n) { var el = form.querySelector('[name="' + n + '"]'); return el ? el.value.trim() : ''; };
+  if (k === 'charge') {
+    var amt = parseAmt(val('amount')); if (!val('item') || amt === null) return nudge(form);
+    upsert('Charges', { id: uid('ch'), cardId: form.dataset.card, item: val('item'), amount: amt, who: lastWho, order: nextOrder(S.Charges) });
+    focusAfter = '#add-item';
+  } else if (k === 'joint') {
+    var ja = parseAmt(val('amount')); if (!val('item') || ja === null) return nudge(form);
+    upsert('Joint', { id: uid('j'), item: val('item'), amount: ja, order: nextOrder(S.Joint) });
+    focusAfter = '#add-joint';
+  } else if (k === 'bill') {
+    var tot = parseAmt(val('total')), us = parseAmt(val('us'));
+    if (!val('name') || tot === null) return nudge(form);
+    upsert('Bills', { id: uid('b'), payOn: form.dataset.p, name: val('name'), total: tot, us: us === null ? tot : us, paid: false, status: '', note: '', order: nextOrder(S.Bills) });
+    focusAfter = '#add-bill-' + form.dataset.p;
+  } else if (k === 'entry') {
+    var ea = parseAmt(val('amount')); if (ea === null) return nudge(form);
+    var dir = (e.submitter && e.submitter.dataset.dir) || 'in';
+    upsert('FundEntries', { id: uid('fe'), fundId: form.dataset.fund, date: val('date'), note: val('note'),
+      amount: dir === 'out' ? -Math.abs(ea) : Math.abs(ea), order: nextOrder(S.FundEntries) });
+  } else if (k === 'gift') {
+    var ga = parseAmt(val('amount')); if (!val('item') || ga === null) return nudge(form);
+    upsert('Gifts', { id: uid('g'), personId: form.dataset.person, item: val('item'), amount: ga, order: nextOrder(S.Gifts) });
+  }
+  render();
+});
+function nudge(form) {
+  var f = Array.prototype.filter.call(form.querySelectorAll('input'), function (i) { return !i.value.trim() && i.name !== 'note' && i.name !== 'us'; })[0];
+  if (f) { f.focus(); f.style.borderColor = 'var(--bad)'; setTimeout(function () { f.style.borderColor = ''; }, 1200); }
+}
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeModal(); });
+
+/* ======================================================================= start */
+function showConnect(msg) {
+  document.body.classList.add('locked');
+  document.getElementById('app').innerHTML =
+    '<form class="connect" data-form="connect"><h1>Open your bills</h1>' +
+    '<p class="sub" style="margin:0">Enter these once on this device and it will remember them.</p>' +
+    '<label for="c-link">App link</label><input id="c-link" name="link" autocomplete="off" placeholder="https://script.google.com/macros/s/…/exec" value="' + esc(CONN.url || '') + '">' +
+    '<label for="c-key">Passcode</label><input id="c-key" name="key" type="password" autocomplete="current-password" placeholder="Your passcode">' +
+    (msg ? '<div class="err">' + esc(msg) + '</div>' : '') +
+    '<button class="btn primary" type="submit">Open</button>' +
+    '<div class="help">The app link is in Google Apps Script under Deploy &gt; Manage deployments (Web app URL). ' +
+    'You can also paste just the Deployment ID that starts with AKfy. The passcode is the one you typed at the top of Code.gs.</div></form>';
+  var f = document.getElementById(CONN.url ? 'c-key' : 'c-link'); if (f) f.focus();
+}
+
+function load() {
+  document.body.classList.remove('locked');
+  document.getElementById('app').innerHTML = '<div class="loading">Loading your bills…</div>';
+  // anything that didn't save before (for example after a passcode change) is saved first
+  var pending = queue; queue = [];
+  (pending.length ? api('apply', { ops: pending }) : Promise.resolve()).then(function () {
+    return api('getData');
+  }).then(function (data) {
+    store('url', CONN.url); store('key', CONN.key);   // remember only once they work
+    S = data; status('All changes saved'); render();
+  }, function (err) {
+    queue = pending.concat(queue);
+    if (authProblem(err)) { showConnect(cleanMsg(err.message)); return; }
+    document.getElementById('app').innerHTML = '<div class="loading">Couldn’t reach your Google Sheet.<br><small>' + esc(err && err.message) +
+      '</small><br><br><button class="btn" onclick="load()">Try again</button> <button class="btn" onclick="showConnect()">Change link or passcode</button></div>';
+  });
+}
+
+if (CONN.url && CONN.key) load(); else showConnect();
+</script>
+</body>
+</html>
