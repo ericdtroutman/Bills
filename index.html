@@ -191,7 +191,18 @@
   .move { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 4px 6px; font-size: 11px;
     font-weight: 700; color: var(--ink2); white-space: nowrap; }
   .move:hover { border-color: var(--accent); color: var(--accent); }
-  .bill-note { font-size: 11px; color: var(--muted); padding-left: 0; margin-top: -6px; padding-bottom: 6px; }
+  .bill-note { font-size: 11.5px; color: var(--muted); margin-top: -6px; margin-bottom: 4px; padding: 2px 8px; }
+  .namecell { position: relative; }
+  .add-note { position: absolute; right: 2px; top: 9px; border: 0; background: var(--soft); color: var(--muted); font-size: 11px;
+    font-weight: 700; padding: 3px 8px; border-radius: 999px; opacity: 0; transition: opacity .12s; }
+  .row:hover .add-note, .add-note:focus { opacity: 1; }
+  .add-note:hover { color: var(--accent); background: var(--accent-soft); }
+  @media (hover: none) { .add-note { opacity: .7; } }
+  .yellow-sum { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; padding: 4px 10px;
+    border-radius: 999px; background: #FFF3BF; color: #8F6A00; margin-bottom: 8px; }
+  .yellow-sum.zero { background: var(--soft); color: var(--muted); }
+  .yellow-sum i { width: 9px; height: 9px; border-radius: 50%; background: #FCC419; display: inline-block; }
+  .yellow-sum small { font-weight: 600; opacity: .8; }
 
   /* ---------- grids of panels */
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; align-items: start; }
@@ -335,7 +346,8 @@ var lastWho = 'Joint';
 var billSide = remember('side') || '1st';
 var focusAfter = null;              // selector to focus after the next render
 var query = '', prevView = null, pastCharges = null, historyLoading = false;
-var openLogin = {};                 // which bills/cards have their login section open
+var openLogin = {};
+var openNote = {};                  // bills whose empty note box is open                 // which bills/cards have their login section open
 var showPw = {};                    // which passwords are showing
 
 /* ---- connection to your Google script (link + passcode are kept only on this device) */
@@ -606,8 +618,13 @@ function billColumn(payOn, color, m) {
   var rows = S.Bills.filter(function (b) { return b.payOn === payOn; }).sort(byOrder);
   var us = payOn === '1st' ? m.us1 : m.us15, tot = payOn === '1st' ? m.tot1 : m.tot15;
   var left = rows.filter(function (b) { return b.status !== 'paid'; }).length;
-  var halfway = rows.filter(function (b) { return b.status === 'half'; }).length;
-  var h = '<section class="panel" style="--c:' + color + '"><div class="phead"><div class="grow"><div class="eyebrow">Paid on the</div>' +
+  var yel = rows.filter(function (b) { return b.status === 'half'; });
+  var halfway = yel.length;
+  var yUs = sum(yel, function (b) { return b.us; }), yTot = sum(yel, function (b) { return b.total; });
+  var h = '<section class="panel" style="--c:' + color + '"><div class="phead"><div class="grow">' +
+    '<div class="yellow-sum' + (halfway ? '' : ' zero') + '" title="Bills marked yellow in this column"><i></i>Yellow: <span class="num">' + money(yUs) + '</span>' +
+    (halfway && Math.abs(yTot - yUs) > 0.004 ? ' <small>(' + money(yTot) + ' total)</small>' : '') + '</div>' +
+    '<div class="eyebrow">Paid on the</div>' +
     '<div style="font-size:26px;font-weight:800;letter-spacing:-.5px">' + payOn + '</div></div>' +
     '<div class="big num">' + money(us) + '<small>our part · ' + money(tot) + ' total</small></div></div>';
   h += '<div class="breakdown"><span class="bk">' + (left ? left + ' not paid yet' : 'All paid') + '</span>' +
@@ -619,7 +636,9 @@ function billColumn(payOn, color, m) {
     h += '<div class="row g-bill' + st + '" data-bill="' + b.id + '">' +
       '<span class="grip" title="Drag to reorder" data-grip="' + b.id + '">' + GRIP_SVG + '</span>' +
       '<button class="check' + (b.status === 'paid' ? ' on' : b.status === 'half' ? ' half' : '') + '" title="Tap: yellow, tap again: green, again: clear" data-act="billpaid" data-id="' + b.id + '"></button>' +
-      '<div>' + textCell('Bills', b.id, 'name', b.name) + (b.note ? '<div class="bill-note">' + esc(b.note) + '</div>' : '') + '</div>' +
+      '<div class="namecell">' + textCell('Bills', b.id, 'name', b.name) +
+        (b.note || openNote[b.id] ? textCell('Bills', b.id, 'note', b.note, 'Type a note', 'bill-note') :
+          '<button class="add-note" data-act="addnote" data-id="' + b.id + '" title="Add a note under this bill">+ note</button>') + '</div>' +
       amtCell('Bills', b.id, 'total', b.total, 'c-total') + amtCell('Bills', b.id, 'us', b.us) + keyButton('Bills', b) +
       '<button class="move" data-act="move" data-id="' + b.id + '" title="Move to the ' + other + '">' + (payOn === '1st' ? 'to 15th →' : '← to 1st') + '</button>' +
       '<button class="x" data-act="del" data-t="Bills" data-id="' + b.id + '">×</button></div>';
@@ -630,6 +649,7 @@ function billColumn(payOn, color, m) {
     '<input class="f-item" name="name" placeholder="New bill" id="add-bill-' + payOn + '" autocomplete="off">' +
     '<input class="f-amt num" name="total" placeholder="Total" inputmode="decimal" autocomplete="off">' +
     '<input class="f-amt num" name="us" placeholder="Our part" inputmode="decimal" autocomplete="off">' +
+    '<input class="f-item" name="note" placeholder="Note (optional)" autocomplete="off">' +
     '<button class="btn primary">Add</button></form></section>';
   return h;
 }
@@ -888,6 +908,10 @@ document.addEventListener('click', function (e) {
     return;
   }
   if (a === 'nav') { query = ''; document.getElementById('q').value = ''; view = b.dataset.v; store('view', view); render(); window.scrollTo(0, 0); }
+  else if (a === 'addnote') {
+    openNote[id] = true; render();
+    var ni = document.querySelector('input[data-t="Bills"][data-id="' + id + '"][data-f="note"]'); if (ni) ni.focus();
+  }
   else if (a === 'login') { openLogin[id] = !openLogin[id]; render(); }
   else if (a === 'showpw') { showPw[id] = !showPw[id]; render(); }
   else if (a === 'copy') { var cr = find(b.dataset.t, id); if (cr && cr[b.dataset.f]) copyText(cr[b.dataset.f]); else toast('Nothing to copy yet'); }
@@ -1024,7 +1048,7 @@ document.addEventListener('submit', function (e) {
   } else if (k === 'bill') {
     var tot = parseAmt(val('total')), us = parseAmt(val('us'));
     if (!val('name') || tot === null) return nudge(form);
-    upsert('Bills', { id: uid('b'), payOn: form.dataset.p, name: val('name'), total: tot, us: us === null ? tot : us, paid: false, status: '', note: '', order: nextOrder(S.Bills) });
+    upsert('Bills', { id: uid('b'), payOn: form.dataset.p, name: val('name'), total: tot, us: us === null ? tot : us, paid: false, status: '', note: val('note'), order: nextOrder(S.Bills) });
     focusAfter = '#add-bill-' + form.dataset.p;
   } else if (k === 'entry') {
     var ea = parseAmt(val('amount')); if (ea === null) return nudge(form);
