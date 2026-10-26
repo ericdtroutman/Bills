@@ -224,6 +224,23 @@
   #toast a { color: #A5B8FF; }
 
   .seg { display: none; }
+  .search-wrap { flex: 0 1 240px; }
+  #q { width: 100%; border: 1px solid var(--line); background: var(--soft); border-radius: 999px; padding: 8px 14px 8px 34px; outline: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237B8494' stroke-width='2.4' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-4-4'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: 12px center; background-size: 15px; }
+  #q:focus { background-color: #fff; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  body.locked .search-wrap { display: none; }
+  .g-res { grid-template-columns: 1fr 150px 90px 110px; cursor: pointer; }
+  .g-res.past { cursor: default; }
+  .c-card-m { display: none; }
+  .cardtag { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 700; }
+  .cardtag i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); display: inline-block; }
+  .found { padding: 14px 20px; font-weight: 700; font-size: 15px; }
+  .found.none { color: var(--bad); }
+  .row.flash { animation: flash 2s ease; }
+  @keyframes flash { 0%, 40% { background: #DBE4FF; } 100% { background: transparent; } }
+  mark { background: #FFE58F; color: inherit; border-radius: 3px; padding: 0 1px; }
+  @media (max-width: 820px) { .search-wrap { order: 4; flex-basis: 100%; } .g-res { grid-template-columns: 1fr 96px; } .g-res .c-who, .g-res .c-card2 { display: none; } .c-card-m { display: inline; } }
   .row.needs { background: #FFF8E1; }
   .row.needs:hover { background: #FFF3CC; }
   select.who.blank { background: #FFE8A3; color: #8F5B00; }
@@ -293,6 +310,7 @@
       <button data-act="nav" data-v="christmas">Christmas</button>
       <button data-act="nav" data-v="bank">Bank Sync</button>
     </nav>
+    <div class="search-wrap"><input id="q" type="search" placeholder="Search all cards" autocomplete="off" aria-label="Search all cards"></div>
     <div class="top-right">
       <span id="status"></span>
       <button class="btn small" data-act="backup">Back up</button>
@@ -316,6 +334,7 @@ var selCard = remember('card');
 var lastWho = 'Joint';
 var billSide = remember('side') || '1st';
 var focusAfter = null;              // selector to focus after the next render
+var query = '', prevView = null, pastCharges = null, historyLoading = false;
 var openLogin = {};                 // which bills/cards have their login section open
 var showPw = {};                    // which passwords are showing
 
@@ -539,7 +558,7 @@ function viewCards(m) {
       var dup = x.bankId && typed.some(function (y) { return Math.abs(y.amount - x.amount) < 0.005; });
       var info = (x.date ? shortDate(x.date) : '') + (x.bankId ? (x.date ? ' · ' : '') + 'from bank' : '') +
         (dup ? ' · <span class="dup">same amount as one you typed. Repeat?</span>' : '');
-      h += '<div class="row g-charge' + (x.who ? '' : ' needs') + '"><div>' + textCell('Charges', x.id, 'item', x.item) +
+      h += '<div class="row g-charge' + (x.who ? '' : ' needs') + '" data-charge="' + x.id + '"><div>' + textCell('Charges', x.id, 'item', x.item) +
         (info ? '<div class="sub2">' + info + '</div>' : '') + '</div>' + amtCell('Charges', x.id, 'amount', x.amount) +
         whoSelect(x) + '<button class="x" title="Delete" data-act="del" data-t="Charges" data-id="' + x.id + '">×</button></div>';
     });
@@ -692,6 +711,78 @@ function viewChristmas() {
   return h;
 }
 
+function matches(x, q) {
+  var n = parseAmt(q);
+  var text = q.toLowerCase();
+  if (String(x.item || '').toLowerCase().indexOf(text) >= 0) return true;
+  if (n !== null && /^[\s$\d.,-]+$/.test(q)) {
+    if (Math.abs(Math.abs(+x.amount) - Math.abs(n)) < 0.005) return true;          // exact amount
+    if (plain(x.amount).indexOf(String(q).replace(/[$,\s]/g, '')) === 0) return true;   // amount starts with what you typed
+  }
+  return false;
+}
+function hl(text, q) {
+  var t = String(text || ''), i = t.toLowerCase().indexOf(q.toLowerCase());
+  if (!q || i < 0) return esc(t);
+  return esc(t.slice(0, i)) + '<mark>' + esc(t.slice(i, i + q.length)) + '</mark>' + esc(t.slice(i + q.length));
+}
+function cardTag(cardId) {
+  var c = find('Cards', cardId);
+  return c ? '<span class="cardtag" style="--c:' + col(c.color) + '"><i></i>' + esc(c.name) + '</span>' : '<span class="cardtag" style="--c:#ADB5BD"><i></i>Deleted card</span>';
+}
+function viewSearch() {
+  var q = query.trim();
+  var now = S.Charges.filter(function (x) { return matches(x, q); })
+    .sort(function (a, b) { return String(b.date || '').localeCompare(String(a.date || '')) || (b.order - a.order); });
+  var past = (pastCharges || []).filter(function (x) { return matches(x, q); })
+    .sort(function (a, b) { return String(b.clearedOn).localeCompare(String(a.clearedOn)); });
+  var h = '<h1>Search</h1><p class="sub">Searching every card for “' + esc(q) + '”. Type a store name or an amount like 85.39.</p>';
+  h += '<section class="panel" style="--c:#4C6EF5"><div class="found' + (now.length ? '' : ' none') + '">' +
+    (now.length ? '✓ ' + now.length + ' match' + (now.length === 1 ? '' : 'es') + ' on your cards now' : '✗ Not on any card right now') + '</div>';
+  if (now.length) {
+    h += '<div class="hrow g-res"><div>Charge</div><div class="c-card2">Card</div><div class="c-who">Who</div><div class="r">Amount</div></div><div class="rows">';
+    now.slice(0, 200).forEach(function (x) {
+      h += '<div class="row g-res" data-act="goto" data-id="' + x.id + '" data-card="' + x.cardId + '" title="Open this card">' +
+        '<div><div>' + hl(x.item, q) + '</div><div class="sub2">' + (x.date ? shortDate(x.date) + ' · ' : '') + '<span class="c-card-m">' + (find('Cards', x.cardId) || { name: 'Deleted card' }).name.replace(/[<>&]/g, '') + '</span></div></div>' +
+        '<div class="c-card2">' + cardTag(x.cardId) + '</div>' +
+        '<div class="c-who">' + (x.who ? '<span style="color:' + WHO_COLOR[x.who] + ';font-weight:700;font-size:12.5px">' + esc(x.who) + '</span>' : '<span class="badge warn">Who?</span>') + '</div>' +
+        '<div class="r num' + (x.amount < 0 ? ' neg-txt' : '') + '">' + money(x.amount) + '</div></div>';
+    });
+    h += '</div>';
+  }
+  h += '</section>';
+  h += '<section class="panel" style="--c:#868E96;margin-top:16px"><div class="found" style="color:var(--ink2)">' +
+    (pastCharges === null ? 'Checking charges you’ve already paid and cleared…' :
+      past.length ? past.length + ' match' + (past.length === 1 ? '' : 'es') + ' already paid and cleared' : 'No matches in charges you’ve already paid and cleared') + '</div>';
+  if (past.length) {
+    h += '<div class="hrow g-res past"><div>Charge</div><div class="c-card2">Card</div><div class="c-who">Who</div><div class="r">Amount</div></div><div class="rows">';
+    past.slice(0, 200).forEach(function (x) {
+      h += '<div class="row g-res past"><div><div>' + hl(x.item, q) + '</div><div class="sub2">' + (x.date ? shortDate(x.date) + ' · ' : '') +
+        'cleared ' + shortDate(x.clearedOn) + '</div></div><div class="c-card2">' + cardTag(x.cardId) + '</div>' +
+        '<div class="c-who" style="font-size:12.5px;font-weight:700;color:' + (WHO_COLOR[x.who] || 'var(--muted)') + '">' + esc(x.who || '—') + '</div>' +
+        '<div class="r num">' + money(x.amount) + '</div></div>';
+    });
+    h += '</div>';
+  }
+  h += '</section>';
+  return h;
+}
+function loadHistory() {
+  if (pastCharges !== null || historyLoading) return;
+  historyLoading = true;
+  api('getHistory').then(function (rows) { pastCharges = rows || []; historyLoading = false; if (view === 'search') render(); },
+    function () { pastCharges = []; historyLoading = false; if (view === 'search') render(); });
+}
+document.addEventListener('input', function (e) {
+  if (e.target.id !== 'q' || !S) return;
+  query = e.target.value;
+  if (query.trim()) {
+    if (view !== 'search') { prevView = view; view = 'search'; }
+    loadHistory();
+  } else if (view === 'search') { view = prevView || 'cards'; }
+  render();
+});
+
 function viewBank() {
   var connected = setting('bankConnected', '') === 'yes';
   var h = '<h1>Bank Sync</h1><p class="sub">New card charges come in once a day from SimpleFIN. They land on the right card with no person picked, so all you do is choose who each one belongs to.</p>';
@@ -742,7 +833,7 @@ function today() { var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.
 /* ======================================================================= render */
 function render() {
   var m = calc();
-  var views = { cards: viewCards, joint: viewJoint, bills: viewBills, savings: viewSavings, christmas: viewChristmas, bank: viewBank };
+  var views = { cards: viewCards, joint: viewJoint, bills: viewBills, savings: viewSavings, christmas: viewChristmas, bank: viewBank, search: viewSearch };
   if (!views[view]) view = 'cards';
   document.getElementById('app').innerHTML = views[view](m);
   Array.prototype.forEach.call(document.querySelectorAll('nav button'), function (b) { b.classList.toggle('on', b.dataset.v === view); });
@@ -789,7 +880,14 @@ function toast(html, ms) {
 document.addEventListener('click', function (e) {
   var b = e.target.closest('[data-act]'); if (!b || !S) return;
   var a = b.dataset.act, id = b.dataset.id;
-  if (a === 'nav') { view = b.dataset.v; store('view', view); render(); window.scrollTo(0, 0); }
+  if (a === 'goto') {
+    query = ''; document.getElementById('q').value = '';
+    view = 'cards'; selCard = b.dataset.card; store('card', selCard); render();
+    var r = document.querySelector('[data-charge="' + id + '"]');
+    if (r) { r.scrollIntoView({ block: 'center', behavior: 'smooth' }); r.classList.add('flash'); }
+    return;
+  }
+  if (a === 'nav') { query = ''; document.getElementById('q').value = ''; view = b.dataset.v; store('view', view); render(); window.scrollTo(0, 0); }
   else if (a === 'login') { openLogin[id] = !openLogin[id]; render(); }
   else if (a === 'showpw') { showPw[id] = !showPw[id]; render(); }
   else if (a === 'copy') { var cr = find(b.dataset.t, id); if (cr && cr[b.dataset.f]) copyText(cr[b.dataset.f]); else toast('Nothing to copy yet'); }
@@ -800,7 +898,14 @@ document.addEventListener('click', function (e) {
   else if (a === 'paid') { var c = find('Cards', id); upsert('Cards', { id: id, paid: !c.paid }); render(); }
   else if (a === 'clearcard') {
     var cc = find('Cards', id), n = S.Charges.filter(function (x) { return x.cardId === id; }).length;
-    confirmBox('Clear ' + cc.name + '?', 'This deletes its ' + n + ' charge' + (n === 1 ? '' : 's') + ' and sets it back to unpaid. Do this after you’ve paid the card.', 'Clear charges', function () {
+    confirmBox('Clear ' + cc.name + '?', 'This takes its ' + n + ' charge' + (n === 1 ? '' : 's') + ' off the card (search can still find them) and sets it back to unpaid. Do this after you’ve paid the card.', 'Clear charges', function () {
+      var day = today();
+      var keepRows = S.Charges.filter(function (x) { return x.cardId === id; }).map(function (x) {
+        return { id: x.id, cardId: id, item: x.item, amount: x.amount, who: x.who, date: x.date || '', clearedOn: day };
+      });
+      // save a copy of each charge to History first, so search can still find it after the card is cleared
+      send(keepRows.map(function (r) { return { op: 'upsert', table: 'History', row: r }; }));
+      if (pastCharges !== null) pastCharges = pastCharges.concat(keepRows);
       removeWhere('Charges', 'cardId', id); upsert('Cards', { id: id, paid: false }); render(); toast(esc(cc.name) + ' cleared');
     });
   }
