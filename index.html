@@ -235,6 +235,9 @@
   #toast a { color: #A5B8FF; }
 
   .seg { display: none; }
+  #undoBtn:disabled { opacity: .45; cursor: default; }
+  .toast-btn { margin-left: 12px; border: 0; background: #fff; color: var(--ink); font-weight: 700; padding: 5px 12px; border-radius: 8px; }
+  #toast { display: flex; align-items: center; }
   .search-wrap { flex: 0 1 240px; }
   #q { width: 100%; border: 1px solid var(--line); background: var(--soft); border-radius: 999px; padding: 8px 14px 8px 34px; outline: none;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237B8494' stroke-width='2.4' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-4-4'/%3E%3C/svg%3E");
@@ -324,6 +327,7 @@
     <div class="search-wrap"><input id="q" type="search" placeholder="Search all cards" autocomplete="off" aria-label="Search all cards"></div>
     <div class="top-right">
       <span id="status"></span>
+      <button class="btn small" id="undoBtn" data-act="undo" disabled title="Nothing to undo">↶ Undo</button>
       <button class="btn small" data-act="backup">Back up</button>
       <button class="link" data-act="logout" title="Forget the link and passcode on this device">Log out</button>
     </div>
@@ -414,18 +418,64 @@ function flush() {
 }
 window.addEventListener('beforeunload', function (e) { if (busy || queue.length) { e.preventDefault(); e.returnValue = ''; } });
 
+/* ---- undo: every change remembers how to put things back. Changes made in one go (one click,
+   one drag, clearing a card) are undone together. */
+var undoStack = [], undoGroup = null, undoLabel = '', replaying = false;
+function clone(o) { return JSON.parse(JSON.stringify(o)); }
+function remember_(inverse) {
+  if (replaying) return;
+  if (!undoGroup) {
+    undoGroup = { label: undoLabel || 'last change', ops: [] };
+    undoStack.push(undoGroup);
+    if (undoStack.length > 50) undoStack.shift();
+    setTimeout(function () { undoGroup = null; undoLabel = ''; updateUndo(); }, 0);
+  }
+  undoGroup.ops.push(inverse);
+}
+function updateUndo() {
+  var b = document.getElementById('undoBtn'); if (!b) return;
+  var last = undoStack[undoStack.length - 1];
+  b.disabled = !last; b.title = last ? 'Undo ' + last.label + ' (Ctrl+Z)' : 'Nothing to undo';
+}
+function undo() {
+  var g = undoStack.pop();
+  if (!g) { toast('Nothing to undo'); return; }
+  replaying = true;
+  g.ops.slice().reverse().forEach(function (o) {
+    if (o.op === 'upsert') upsert(o.table, clone(o.row)); else removeRow(o.table, o.id);
+  });
+  replaying = false;
+  updateUndo(); render();
+  toast('Undid ' + esc(g.label) + (undoStack.length ? ' <button class="toast-btn" data-act="undo">Undo more</button>' : ''), 4000);
+}
+
 function upsert(table, row) {
-  var list = S[table], i = -1;
+  var list = S[table];
+  if (!list) {   // a table the page doesn't keep a copy of (History): just save it
+    remember_({ op: 'remove', table: table, id: row.id });
+    if (table === 'History' && pastCharges !== null) pastCharges = pastCharges.filter(function (r) { return r.id !== row.id; }).concat([row]);
+    send([{ op: 'upsert', table: table, row: clone(row) }]);
+    return;
+  }
+  var i = -1;
   for (var k = 0; k < list.length; k++) if (list[k].id === row.id) { i = k; break; }
-  if (i >= 0) { Object.keys(row).forEach(function (f) { list[i][f] = row[f]; }); row = list[i]; }
-  else list.push(row);
-  send([{ op: 'upsert', table: table, row: JSON.parse(JSON.stringify(row)) }]);
+  if (i >= 0) { remember_({ op: 'upsert', table: table, row: clone(list[i]) }); Object.keys(row).forEach(function (f) { list[i][f] = row[f]; }); row = list[i]; }
+  else { remember_({ op: 'remove', table: table, id: row.id }); list.push(row); }
+  send([{ op: 'upsert', table: table, row: clone(row) }]);
 }
 function removeRow(table, id) {
-  S[table] = S[table].filter(function (r) { return r.id !== id; });
+  if (S[table]) {
+    var gone = S[table].filter(function (r) { return r.id === id; })[0];
+    if (gone) remember_({ op: 'upsert', table: table, row: clone(gone) });
+    S[table] = S[table].filter(function (r) { return r.id !== id; });
+  } else if (table === 'History' && pastCharges !== null) {
+    pastCharges = pastCharges.filter(function (r) { return r.id !== id; });
+  }
   send([{ op: 'remove', table: table, id: id }]);
 }
 function removeWhere(table, field, value) {
+  S[table].filter(function (r) { return String(r[field]) === String(value); })
+    .forEach(function (r) { remember_({ op: 'upsert', table: table, row: clone(r) }); });
   S[table] = S[table].filter(function (r) { return String(r[field]) !== String(value); });
   send([{ op: 'removeWhere', table: table, field: field, value: value }]);
 }
@@ -858,6 +908,7 @@ function render() {
   document.getElementById('app').innerHTML = views[view](m);
   Array.prototype.forEach.call(document.querySelectorAll('nav button'), function (b) { b.classList.toggle('on', b.dataset.v === view); });
   if (focusAfter) { var el = document.querySelector(focusAfter); if (el) el.focus(); focusAfter = null; }
+  updateUndo();
 }
 
 /* ======================================================================= modal + toast */
@@ -918,25 +969,34 @@ document.addEventListener('click', function (e) {
   else if (a === 'side') { billSide = b.dataset.p; store('side', billSide); render(); }
   else if (a === 'card') { selCard = id; store('card', id); render(); }
   else if (a === 'pickwho') { lastWho = b.dataset.w; Array.prototype.forEach.call(b.parentNode.children, function (x) { x.classList.toggle('on', x === b); }); }
-  else if (a === 'del') { removeRow(b.dataset.t, id); render(); }
-  else if (a === 'paid') { var c = find('Cards', id); upsert('Cards', { id: id, paid: !c.paid }); render(); }
+  else if (a === 'undo') { undo(); }
+  else if (a === 'del') {
+    var dr = find(b.dataset.t, id) || {};
+    undoLabel = 'deleting “' + (dr.item || dr.name || dr.note || 'item') + '”';
+    removeRow(b.dataset.t, id); render();
+    toast('Deleted “' + esc(dr.item || dr.name || dr.note || 'item') + '” <button class="toast-btn" data-act="undo">Undo</button>', 6000);
+  }
+  else if (a === 'paid') { var c = find('Cards', id); undoLabel = 'marking ' + c.name + (c.paid ? ' unpaid' : ' paid'); upsert('Cards', { id: id, paid: !c.paid }); render(); }
   else if (a === 'clearcard') {
     var cc = find('Cards', id), n = S.Charges.filter(function (x) { return x.cardId === id; }).length;
     confirmBox('Clear ' + cc.name + '?', 'This takes its ' + n + ' charge' + (n === 1 ? '' : 's') + ' off the card (search can still find them) and sets it back to unpaid. Do this after you’ve paid the card.', 'Clear charges', function () {
+      undoLabel = 'clearing ' + cc.name;
       var day = today();
       var keepRows = S.Charges.filter(function (x) { return x.cardId === id; }).map(function (x) {
         return { id: x.id, cardId: id, item: x.item, amount: x.amount, who: x.who, date: x.date || '', clearedOn: day };
       });
       // save a copy of each charge to History first, so search can still find it after the card is cleared
-      send(keepRows.map(function (r) { return { op: 'upsert', table: 'History', row: r }; }));
-      if (pastCharges !== null) pastCharges = pastCharges.concat(keepRows);
-      removeWhere('Charges', 'cardId', id); upsert('Cards', { id: id, paid: false }); render(); toast(esc(cc.name) + ' cleared');
+      keepRows.forEach(function (r) { upsert('History', r); });
+      removeWhere('Charges', 'cardId', id); upsert('Cards', { id: id, paid: false }); render();
+      toast(esc(cc.name) + ' cleared <button class="toast-btn" data-act="undo">Undo</button>', 8000);
     });
   }
   else if (a === 'delcard') {
     var dc = find('Cards', id);
     confirmBox('Delete ' + dc.name + '?', 'The card and all its charges will be removed.', 'Delete card', function () {
+      undoLabel = 'deleting ' + dc.name;
       removeWhere('Charges', 'cardId', id); removeRow('Cards', id); selCard = null; render();
+      toast('Deleted ' + esc(dc.name) + ' <button class="toast-btn" data-act="undo">Undo</button>', 8000);
     });
   }
   else if (a === 'addcard') {
@@ -946,11 +1006,13 @@ document.addEventListener('click', function (e) {
     });
   }
   else if (a === 'billpaid') {
+    undoLabel = 'color change';
     var bl = find('Bills', id), nextSt = bl.status === 'half' ? 'paid' : bl.status === 'paid' ? '' : 'half';
     upsert('Bills', { id: id, status: nextSt, paid: nextSt === 'paid' }); render();
   }
-  else if (a === 'move') { var mv = find('Bills', id); upsert('Bills', { id: id, payOn: mv.payOn === '1st' ? '15th' : '1st', order: nextOrder(S.Bills) }); render(); }
+  else if (a === 'move') { undoLabel = 'moving a bill'; var mv = find('Bills', id); upsert('Bills', { id: id, payOn: mv.payOn === '1st' ? '15th' : '1st', order: nextOrder(S.Bills) }); render(); }
   else if (a === 'uncheck') {
+    undoLabel = 'clearing colors';
     S.Bills.filter(function (x) { return x.payOn === b.dataset.p && x.status; }).forEach(function (x) { upsert('Bills', { id: x.id, status: '', paid: false }); });
     render();
   }
@@ -960,7 +1022,9 @@ document.addEventListener('click', function (e) {
   else if (a === 'delfund') {
     var f = find('Funds', id);
     confirmBox('Delete ' + f.name + '?', 'The fund and its history will be removed.', 'Delete fund', function () {
+      undoLabel = 'deleting ' + f.name;
       removeWhere('FundEntries', 'fundId', id); removeRow('Funds', id); render();
+      toast('Deleted ' + esc(f.name) + ' <button class="toast-btn" data-act="undo">Undo</button>', 8000);
     });
   }
   else if (a === 'addperson') {
@@ -969,7 +1033,9 @@ document.addEventListener('click', function (e) {
   else if (a === 'delperson') {
     var p = find('People', id);
     confirmBox('Remove ' + p.name + '?', 'Their gifts will be removed too.', 'Remove', function () {
+      undoLabel = 'removing ' + p.name;
       removeWhere('Gifts', 'personId', id); removeRow('People', id); render();
+      toast('Removed ' + esc(p.name) + ' <button class="toast-btn" data-act="undo">Undo</button>', 8000);
     });
   }
   else if (a === 'backup') {
@@ -1011,6 +1077,7 @@ document.addEventListener('change', function (e) {
     v = v.trim();
     if (!v && (f === 'name')) { render(); return; }
   }
+  undoLabel = 'editing';
   var row = { id: id }; row[f] = v;
   if (t === 'Settings' && !find('Settings', id)) S.Settings.push({ id: id, value: '' });
   upsert(t, row);
@@ -1036,6 +1103,7 @@ document.addEventListener('submit', function (e) {
     load();
     return;
   }
+  undoLabel = 'adding';
   var k = form.dataset.form, val = function (n) { var el = form.querySelector('[name="' + n + '"]'); return el ? el.value.trim() : ''; };
   if (k === 'charge') {
     var amt = parseAmt(val('amount')); if (!val('item') || amt === null) return nudge(form);
@@ -1067,6 +1135,11 @@ function nudge(form) {
 }
 document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape') { closeModal(); return; }
+  // Ctrl+Z / Cmd+Z undoes the last change, except while typing in a box (there it undoes typing as usual)
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+    var tag = (e.target.tagName || '').toLowerCase();
+    if (S && tag !== 'input' && tag !== 'textarea' && tag !== 'select') { e.preventDefault(); undo(); return; }
+  }
   var chip = e.target.closest && e.target.closest('.whopick button');
   if (chip && e.key === 'Enter') {
     e.preventDefault();
@@ -1118,6 +1191,7 @@ function endDrag() {
   var d = drag; drag = null;
   d.row.classList.remove('dragging');
   document.body.classList.remove('drag-on');
+  undoLabel = 'reordering';
   var list = d.row.parentNode, payOn = list.dataset.pay;
   var ids = Array.prototype.map.call(list.querySelectorAll('.row[data-bill]'), function (r) { return r.dataset.bill; });
   ids.forEach(function (id, i) {
