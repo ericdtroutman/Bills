@@ -129,7 +129,16 @@
   .row { border-top: 1px solid var(--line); min-height: 44px; }
   .row:first-child { border-top: 0; }
   .row:hover { background: #FBFBFD; }
-  .g-charge { grid-template-columns: 1fr 110px 108px 26px; }
+  .g-charge { grid-template-columns: 26px 1fr 110px 108px 26px; }
+  .holdbox { width: 18px; height: 18px; border-radius: 5px; border: 2px solid #C3C8D2; background: #fff; padding: 0; display: grid; place-items: center; }
+  .holdbox:hover { border-color: #868E96; }
+  .holdbox.on { background: #868E96; border-color: #868E96; }
+  .holdbox.on::after { content: ""; width: 5px; height: 9px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg) translate(-1px, -1px); }
+  .row.held, .row.held:hover { background: #F1F3F5; }
+  .row.held .cell, .row.held .amt span { color: #ADB5BD; text-decoration: line-through; }
+  .row.held select.who { filter: grayscale(1); opacity: .6; }
+  .hchip { font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 999px; background: #E9ECF1; color: #6B7280; margin-left: 4px; text-decoration: none; }
+  .bk.hold { background: #E9ECF1; color: #495057; }
   .g-bill { grid-template-columns: 16px 28px 1fr 96px 96px 28px 64px 22px; }
   .row.g-bill, .hrow.g-bill { padding-left: 8px; }
   .grip { width: 16px; height: 28px; display: grid; place-items: center; color: #C3C8D2; cursor: grab;
@@ -235,6 +244,17 @@
   #toast a { color: #A5B8FF; }
 
   .seg { display: none; }
+  .pend-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 20px 6px;
+    background: #FAFBFC; flex-wrap: wrap; }
+  .rows.pend { border-bottom: 1px dashed #D5DAE1; }
+  .pend-head b { font-size: 13px; }
+  .pend-head span { font-size: 12px; color: var(--muted); }
+  .rows.pend { background: #FAFBFC; }
+  .rows.pend .row { color: var(--ink2); }
+  .rows.pend .row .item { font-style: italic; }
+  .pchip { font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 999px; background: #E9ECF1; color: var(--muted);
+    margin-left: 6px; font-style: normal; }
+  .ppend { font-size: 11px; color: var(--muted); font-weight: 600; }
   #undoBtn:disabled { opacity: .45; cursor: default; }
   .toast-btn { margin-left: 12px; border: 0; background: #fff; color: var(--ink); font-weight: 700; padding: 5px 12px; border-radius: 8px; }
   #toast { display: flex; align-items: center; }
@@ -297,7 +317,7 @@
     nav { order: 3; flex-basis: 100%; }
     main { padding: 16px 12px 80px; }
     .phead, .breakdown, .addrow, .hrow, .row, .pfoot { padding-left: 14px; padding-right: 14px; }
-    .g-charge { grid-template-columns: 1fr 92px 86px 24px; }
+    .g-charge { grid-template-columns: 24px 1fr 92px 86px 24px; }
     .g-bill { grid-template-columns: 16px 26px 1fr 80px 80px 26px 56px 20px; }
     .row.g-bill, .hrow.g-bill { padding-left: 6px; }
     .login { margin-left: 14px; margin-right: 14px; grid-template-columns: 1fr; gap: 4px; }
@@ -473,6 +493,12 @@ function removeRow(table, id) {
   }
   send([{ op: 'remove', table: table, id: id }]);
 }
+function removeIds(table, ids) {
+  var drop = {}; ids.forEach(function (i) { drop[i] = true; });
+  S[table].filter(function (r) { return drop[r.id]; }).forEach(function (r) { remember_({ op: 'upsert', table: table, row: clone(r) }); });
+  S[table] = S[table].filter(function (r) { return !drop[r.id]; });
+  if (ids.length) send([{ op: 'removeIds', table: table, ids: ids }]);
+}
 function removeWhere(table, field, value) {
   S[table].filter(function (r) { return String(r[field]) === String(value); })
     .forEach(function (r) { remember_({ op: 'upsert', table: table, row: clone(r) }); });
@@ -481,10 +507,18 @@ function removeWhere(table, field, value) {
 }
 
 /* ======================================================================= math */
+function pendingMath() {
+  var P = S.Pending || [], by = {};
+  WHO.forEach(function (w) { by[w] = sum(P.filter(function (p) { return p.who === w; }), function (p) { return p.amount; }); });
+  return { all: sum(P, function (p) { return p.amount; }), n: P.length,
+           eric: by.Eric + by.Split / 2, arianna: by.Arianna + by.Split / 2, joint: by.Joint,
+           unlabeled: P.filter(function (p) { return WHO.indexOf(p.who) < 0; }).length };
+}
 function calc() {
   var tag = {};
-  WHO.forEach(function (w) { tag[w] = sum(S.Charges.filter(function (c) { return c.who === w; }), function (c) { return c.amount; }); });
-  var onCards = sum(S.Charges, function (c) { return c.amount; });
+  var live = S.Charges.filter(function (c) { return !c.hold; });     // charges on hold don't count anywhere
+  WHO.forEach(function (w) { tag[w] = sum(live.filter(function (c) { return c.who === w; }), function (c) { return c.amount; }); });
+  var onCards = sum(live, function (c) { return c.amount; });
   var tagged = sum(WHO, function (w) { return tag[w]; });
   var inJoint = sum(S.Joint, function (j) { return j.amount; });
   var b1 = S.Bills.filter(function (b) { return b.payOn === '1st'; });
@@ -493,7 +527,9 @@ function calc() {
   var ourTotal = us1 + us15, half = ourTotal / 2;
   return {
     tag: tag, onCards: onCards, untagged: Math.round((onCards - tagged) * 100) / 100,
-    needN: S.Charges.filter(function (c) { return WHO.indexOf(c.who) < 0; }).length,
+    needN: live.filter(function (c) { return WHO.indexOf(c.who) < 0; }).length,
+    held: S.Charges.filter(function (c) { return c.hold; }),
+    pend: pendingMath(),
     eric: tag.Eric + tag.Split / 2, arianna: tag.Arianna + tag.Split / 2,
     inJoint: inJoint, jointLeft: inJoint - tag.Joint,
     us1: us1, us15: us15, tot1: sum(b1, function (b) { return b.total; }), tot15: sum(b15, function (b) { return b.total; }),
@@ -520,8 +556,8 @@ function textCell(table, id, field, value, ph, cls) {
   return '<input class="cell' + (cls ? ' ' + cls : '') + '" data-t="' + table + '" data-id="' + id + '" data-f="' + field + '" value="' + esc(value) +
     '" placeholder="' + esc(ph || '') + '">';
 }
-function whoSelect(c) {
-  return '<select class="who' + (c.who ? '' : ' blank') + '" style="--w:' + (WHO_COLOR[c.who] || '#8F5B00') + '" data-t="Charges" data-id="' + c.id + '" data-f="who">' +
+function whoSelect(c, table) {
+  return '<select class="who' + (c.who ? '' : ' blank') + '" style="--w:' + (WHO_COLOR[c.who] || '#8F5B00') + '" data-t="' + (table || 'Charges') + '" data-id="' + esc(c.id) + '" data-f="who">' +
     (c.who ? '' : '<option value="" selected>Who?</option>') +
     WHO.map(function (w) { return '<option' + (w === c.who ? ' selected' : '') + '>' + w + '</option>'; }).join('') + '</select>';
 }
@@ -569,40 +605,48 @@ function viewCards(m) {
   if (!cards.some(function (c) { return c.id === selCard; })) selCard = cards.length ? cards[0].id : null;
   var h = '<h1>Cards</h1><p class="sub">Tag each charge with who it belongs to. Everything adds up on its own.</p>';
   h += '<div class="tiles">' +
-    tile('Eric owes', m.eric, { hint: 'His charges + half of Split' }) +
-    tile('Arianna owes', m.arianna, { hint: 'Her charges + half of Split' }) +
-    tile('Joint money left', m.jointLeft, { sign: true, act: 'joint', hint: 'Tap to change what’s in the joint' }) +
+    tile('Eric owes', m.eric, { hint: m.pend.eric ? 'With pending: ' + money(m.eric + m.pend.eric) : 'His charges + half of Split' }) +
+    tile('Arianna owes', m.arianna, { hint: m.pend.arianna ? 'With pending: ' + money(m.arianna + m.pend.arianna) : 'Her charges + half of Split' }) +
+    tile('Joint money left', m.jointLeft, { sign: true, act: 'joint', hint: m.pend.joint ? 'After pending: ' + money(m.jointLeft - m.pend.joint) : 'Tap to change what’s in the joint' }) +
     tile('Bills on cards', m.tag.Bills, { hint: 'Already in the monthly budget' }) +
-    tile('Total on all cards', m.onCards, { hint: m.needN ? m.needN + ' charge' + (m.needN === 1 ? '' : 's') + ' need a person' : 'Every charge has a person', warn: !!m.needN }) +
+    tile('Total on all cards', m.onCards, { hint: m.needN ? m.needN + (m.needN === 1 ? ' charge needs' : ' charges need') + ' a person' :
+      (m.held.length ? money(sum(m.held, function (x) { return x.amount; })) + ' on hold, not counted' :
+      (m.pend.n ? '+ ' + money(m.pend.all) + ' pending' : 'Every charge has a person')), warn: !!m.needN }) +
     '</div>';
 
   h += '<div class="pills">';
   cards.forEach(function (c) {
-    var t = sum(S.Charges.filter(function (x) { return x.cardId === c.id; }), function (x) { return x.amount; });
+    var t = sum(S.Charges.filter(function (x) { return x.cardId === c.id && !x.hold; }), function (x) { return x.amount; });
     h += '<button class="pill' + (c.id === selCard ? ' on' : '') + '" style="--c:' + col(c.color) + '" data-act="card" data-id="' + c.id + '">' +
       '<span class="pname">' + esc(c.name) + (c.paid ? ' <span class="badge">Paid</span>' : '') +
-      (function () { var n = S.Charges.filter(function (x) { return x.cardId === c.id && !x.who; }).length; return n ? ' <span class="badge warn">' + n + ' new</span>' : ''; })() + '</span>' +
-      '<span class="ptot num">' + money(t) + '</span></button>';
+      (function () { var n = S.Charges.filter(function (x) { return x.cardId === c.id && !x.who && !x.hold; }).length; return n ? ' <span class="badge warn">' + n + ' new</span>' : ''; })() + '</span>' +
+      '<span class="ptot num">' + money(t) + '</span>' +
+      (function () { var pp = (S.Pending || []).filter(function (x) { return x.cardId === c.id; }); return pp.length ? '<span class="ppend">+ ' + money(sum(pp, function (x) { return x.amount; })) + ' pending</span>' : ''; })() +
+      '</button>';
   });
   h += '<button class="pill add" data-act="addcard">+ Add card</button></div>';
 
   var card = cards.filter(function (c) { return c.id === selCard; })[0];
   if (!card) return h + '<div class="panel"><div class="empty">Add your first card to get started.</div></div>';
   var items = S.Charges.filter(function (x) { return x.cardId === card.id; }).sort(byOrder).reverse();
-  var total = sum(items, function (x) { return x.amount; });
+  var liveItems = items.filter(function (x) { return !x.hold; }), heldItems = items.filter(function (x) { return x.hold; });
+  var total = sum(liveItems, function (x) { return x.amount; });
+  var heldTotal = sum(heldItems, function (x) { return x.amount; });
 
   h += '<section class="panel" style="--c:' + col(card.color) + '"><div class="phead">' +
     '<div class="grow"><div class="eyebrow">Card</div>' + textCell('Cards', card.id, 'name', card.name, '', 'title-in') +
     '<button class="btn small" style="margin-top:6px" data-act="login" data-t="Cards" data-id="' + card.id + '">' + KEY_SVG.replace('<svg', '<svg style="width:13px;height:13px;vertical-align:-2px;margin-right:5px"') + (openLogin[card.id] ? 'Hide login' : 'Login info' + (hasLogin(card) ? ' ✓' : '')) + '</button></div>' +
-    '<div class="big num">' + money(total) + '<small>' + items.length + ' charge' + (items.length === 1 ? '' : 's') + '</small></div>' +
+    '<div class="big num">' + money(total) + '<small>' + liveItems.length + ' charge' + (liveItems.length === 1 ? '' : 's') +
+      (heldItems.length ? ' · ' + money(heldTotal) + ' on hold' : '') + '</small></div>' +
     '</div>';
   if (openLogin[card.id]) h += loginBox('Cards', card);
   var parts = WHO.map(function (w) {
-    var t = sum(items.filter(function (x) { return x.who === w; }), function (x) { return x.amount; });
+    var t = sum(liveItems.filter(function (x) { return x.who === w; }), function (x) { return x.amount; });
     return t ? '<span class="bk" style="color:' + WHO_COLOR[w] + '">' + w + ' <b>' + money(t) + '</b></span>' : '';
   }).join('');
-  var needN = items.filter(function (x) { return !x.who; }).length;
-  if (needN) parts = '<span class="bk warn">' + needN + ' need a person <b>' + money(sum(items.filter(function (x) { return !x.who; }), function (x) { return x.amount; })) + '</b></span>' + parts;
+  var needN = liveItems.filter(function (x) { return !x.who; }).length;
+  if (needN) parts = '<span class="bk warn">' + needN + (needN === 1 ? ' needs' : ' need') + ' a person <b>' + money(sum(liveItems.filter(function (x) { return !x.who; }), function (x) { return x.amount; })) + '</b></span>' + parts;
+  if (heldItems.length) parts += '<span class="bk hold">On hold (not counted) <b>' + money(heldTotal) + '</b></span>';
   if (parts) h += '<div class="breakdown">' + parts + '</div>';
 
   h += '<form class="addrow" data-form="charge" data-card="' + card.id + '">' +
@@ -613,14 +657,28 @@ function viewCards(m) {
     }).join('') + '</div>' +
     '<button class="btn primary" type="submit">Add</button></form>';
 
+  var pend = (S.Pending || []).filter(function (x) { return x.cardId === card.id; })
+    .sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
+  if (pend.length) {
+    h += '<div class="pend-head"><b>Pending at the bank · ' + money(sum(pend, function (x) { return x.amount; })) + '</b>' +
+      '<span>Not in the totals yet. Label them to see what’s coming. When one posts it moves up into the charges.</span></div><div class="rows pend">';
+    pend.forEach(function (x) {
+      h += '<div class="row g-charge" data-charge="' + esc(x.id) + '"><div></div><div><div class="item" style="padding:7px 0">' + esc(x.item) + '<span class="pchip">pending</span></div>' +
+        (x.date ? '<div class="sub2">' + shortDate(x.date) + '</div>' : '') + '</div>' +
+        '<div class="r num' + (x.amount < 0 ? ' neg-txt' : '') + '">' + money(x.amount) + '</div>' + whoSelect(x, 'Pending') + '<div></div></div>';
+    });
+    h += '</div>';
+  }
   if (items.length) {
-    h += '<div class="hrow g-charge"><div>Item</div><div class="r">Amount</div><div style="text-align:center">Who</div><div></div></div><div class="rows">';
+    h += '<div class="hrow g-charge"><div title="Check to put a charge on hold">Hold</div><div>Item</div><div class="r">Amount</div><div style="text-align:center">Who</div><div></div></div><div class="rows">';
     var typed = items.filter(function (y) { return !y.bankId; });
     items.forEach(function (x) {
       var dup = x.bankId && typed.some(function (y) { return Math.abs(y.amount - x.amount) < 0.005; });
-      var info = (x.date ? shortDate(x.date) : '') + (x.bankId ? (x.date ? ' · ' : '') + 'from bank' : '') +
+      var info = (x.hold ? '<span class="hchip">on hold</span> ' : '') + (x.date ? shortDate(x.date) : '') + (x.bankId ? (x.date ? ' · ' : '') + 'from bank' : '') +
         (dup ? ' · <span class="dup">same amount as one you typed. Repeat?</span>' : '');
-      h += '<div class="row g-charge' + (x.who ? '' : ' needs') + '" data-charge="' + x.id + '"><div>' + textCell('Charges', x.id, 'item', x.item) +
+      h += '<div class="row g-charge' + (x.hold ? ' held' : x.who ? '' : ' needs') + '" data-charge="' + x.id + '">' +
+        '<button class="holdbox' + (x.hold ? ' on' : '') + '" data-act="hold" data-id="' + x.id + '" title="' + (x.hold ? 'On hold. Click to count it again' : 'Put on hold (not counted, stays when you clear the card)') + '"></button>' +
+        '<div>' + textCell('Charges', x.id, 'item', x.item) +
         (info ? '<div class="sub2">' + info + '</div>' : '') + '</div>' + amtCell('Charges', x.id, 'amount', x.amount) +
         whoSelect(x) + '<button class="x" title="Delete" data-act="del" data-t="Charges" data-id="' + x.id + '">×</button></div>';
     });
@@ -630,7 +688,7 @@ function viewCards(m) {
   }
   h += '<div class="pfoot"><div class="pactions">' +
     '<button class="btn' + (card.paid ? ' primary' : '') + '" data-act="paid" data-id="' + card.id + '">' + (card.paid ? '✓ Paid' : 'Mark as paid') + '</button>' +
-    '<button class="btn" data-act="clearcard" data-id="' + card.id + '"' + (items.length ? '' : ' disabled') + '>Clear charges</button>' +
+    '<button class="btn" data-act="clearcard" data-id="' + card.id + '"' + (liveItems.length ? '' : ' disabled') + '>Clear charges</button>' +
     '</div><button class="link danger" data-act="delcard" data-id="' + card.id + '">Delete this card</button></div></section>';
   return h;
 }
@@ -650,7 +708,7 @@ function viewJoint(m) {
     '<input class="f-amt num" name="amount" placeholder="0.00" inputmode="decimal" autocomplete="off"><button class="btn primary">Add</button></form></section>';
 
   var cards = {}; S.Cards.forEach(function (c) { cards[c.id] = c; });
-  var jc = S.Charges.filter(function (c) { return c.who === 'Joint'; });
+  var jc = S.Charges.filter(function (c) { return c.who === 'Joint' && !c.hold; });
   h += '<section class="panel" style="--c:#868E96"><div class="phead"><div class="grow"><div class="eyebrow">Money out</div>' +
     '<div style="font-size:20px;font-weight:800">Joint charges on cards</div></div><div class="big num">' + money(m.tag.Joint) + '</div></div><div class="rows">';
   h += jc.length ? jc.map(function (c) {
@@ -802,7 +860,8 @@ function cardTag(cardId) {
 }
 function viewSearch() {
   var q = query.trim();
-  var now = S.Charges.filter(function (x) { return matches(x, q); })
+  var now = S.Charges.concat((S.Pending || []).map(function (p) { var c = clone(p); c.isPending = true; return c; }))
+    .filter(function (x) { return matches(x, q); })
     .sort(function (a, b) { return String(b.date || '').localeCompare(String(a.date || '')) || (b.order - a.order); });
   var past = (pastCharges || []).filter(function (x) { return matches(x, q); })
     .sort(function (a, b) { return String(b.clearedOn).localeCompare(String(a.clearedOn)); });
@@ -813,7 +872,7 @@ function viewSearch() {
     h += '<div class="hrow g-res"><div>Charge</div><div class="c-card2">Card</div><div class="c-who">Who</div><div class="r">Amount</div></div><div class="rows">';
     now.slice(0, 200).forEach(function (x) {
       h += '<div class="row g-res" data-act="goto" data-id="' + x.id + '" data-card="' + x.cardId + '" title="Open this card">' +
-        '<div><div>' + hl(x.item, q) + '</div><div class="sub2">' + (x.date ? shortDate(x.date) + ' · ' : '') + '<span class="c-card-m">' + (find('Cards', x.cardId) || { name: 'Deleted card' }).name.replace(/[<>&]/g, '') + '</span></div></div>' +
+        '<div><div>' + hl(x.item, q) + (x.isPending ? '<span class="pchip">pending</span>' : '') + (x.hold ? '<span class="hchip">on hold</span>' : '') + '</div><div class="sub2">' + (x.date ? shortDate(x.date) + ' · ' : '') + '<span class="c-card-m">' + (find('Cards', x.cardId) || { name: 'Deleted card' }).name.replace(/[<>&]/g, '') + '</span></div></div>' +
         '<div class="c-card2">' + cardTag(x.cardId) + '</div>' +
         '<div class="c-who">' + (x.who ? '<span style="color:' + WHO_COLOR[x.who] + ';font-weight:700;font-size:12.5px">' + esc(x.who) + '</span>' : '<span class="badge warn">Who?</span>') + '</div>' +
         '<div class="r num' + (x.amount < 0 ? ' neg-txt' : '') + '">' + money(x.amount) + '</div></div>';
@@ -891,7 +950,7 @@ function viewBank() {
   h += '</div><div class="pfoot"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span style="font-size:13px;font-weight:600">Only bring in charges from</span>' +
     '<input class="datein" style="width:auto" type="date" data-t="Settings" data-id="syncStart" data-f="value" value="' + esc(setting('syncStart', '')) + '"></div>' +
     '<button class="link danger" data-act="bankdisconnect">Disconnect</button></div></section>';
-  h += '<p class="sub" style="margin-top:14px">Each charge from the bank is only ever brought in once, even after you clear a card. Pending charges wait until they post. Card payments are skipped and refunds come in as negatives.</p>';
+  h += '<p class="sub" style="margin-top:14px">Each charge from the bank is only ever brought in once, even after you clear a card. Pending charges show in a separate list on each card where you can label them; when they post they come in as normal charges with “Who?”. Card payments are skipped and refunds come in as negatives.</p>';
   return h;
 }
 function refreshData(note) {
@@ -970,6 +1029,11 @@ document.addEventListener('click', function (e) {
   else if (a === 'card') { selCard = id; store('card', id); render(); }
   else if (a === 'pickwho') { lastWho = b.dataset.w; Array.prototype.forEach.call(b.parentNode.children, function (x) { x.classList.toggle('on', x === b); }); }
   else if (a === 'undo') { undo(); }
+  else if (a === 'hold') {
+    var hc = find('Charges', id);
+    undoLabel = (hc.hold ? 'taking “' : 'putting “') + hc.item + (hc.hold ? '” off hold' : '” on hold');
+    upsert('Charges', { id: id, hold: !hc.hold }); render();
+  }
   else if (a === 'del') {
     var dr = find(b.dataset.t, id) || {};
     undoLabel = 'deleting “' + (dr.item || dr.name || dr.note || 'item') + '”';
@@ -978,16 +1042,19 @@ document.addEventListener('click', function (e) {
   }
   else if (a === 'paid') { var c = find('Cards', id); undoLabel = 'marking ' + c.name + (c.paid ? ' unpaid' : ' paid'); upsert('Cards', { id: id, paid: !c.paid }); render(); }
   else if (a === 'clearcard') {
-    var cc = find('Cards', id), n = S.Charges.filter(function (x) { return x.cardId === id; }).length;
-    confirmBox('Clear ' + cc.name + '?', 'This takes its ' + n + ' charge' + (n === 1 ? '' : 's') + ' off the card (search can still find them) and sets it back to unpaid. Do this after you’ve paid the card.', 'Clear charges', function () {
+    var cc = find('Cards', id), n = S.Charges.filter(function (x) { return x.cardId === id && !x.hold; }).length;
+    var nh = S.Charges.filter(function (x) { return x.cardId === id && x.hold; }).length;
+    confirmBox('Clear ' + cc.name + '?', 'This takes its ' + n + ' charge' + (n === 1 ? '' : 's') + ' off the card (search can still find them) and sets it back to unpaid.' +
+      (nh ? ' The ' + nh + ' on hold stay on the card.' : '') + ' Do this after you’ve paid the card.', 'Clear charges', function () {
       undoLabel = 'clearing ' + cc.name;
       var day = today();
-      var keepRows = S.Charges.filter(function (x) { return x.cardId === id; }).map(function (x) {
+      var toClear = S.Charges.filter(function (x) { return x.cardId === id && !x.hold; });
+      var keepRows = toClear.map(function (x) {
         return { id: x.id, cardId: id, item: x.item, amount: x.amount, who: x.who, date: x.date || '', clearedOn: day };
       });
       // save a copy of each charge to History first, so search can still find it after the card is cleared
       keepRows.forEach(function (r) { upsert('History', r); });
-      removeWhere('Charges', 'cardId', id); upsert('Cards', { id: id, paid: false }); render();
+      removeIds('Charges', toClear.map(function (x) { return x.id; })); upsert('Cards', { id: id, paid: false }); render();
       toast(esc(cc.name) + ' cleared <button class="toast-btn" data-act="undo">Undo</button>', 8000);
     });
   }
@@ -1107,7 +1174,7 @@ document.addEventListener('submit', function (e) {
   var k = form.dataset.form, val = function (n) { var el = form.querySelector('[name="' + n + '"]'); return el ? el.value.trim() : ''; };
   if (k === 'charge') {
     var amt = parseAmt(val('amount')); if (!val('item') || amt === null) return nudge(form);
-    upsert('Charges', { id: uid('ch'), cardId: form.dataset.card, item: val('item'), amount: amt, who: lastWho, order: nextOrder(S.Charges) });
+    upsert('Charges', { id: uid('ch'), cardId: form.dataset.card, item: val('item'), amount: amt, who: lastWho, order: nextOrder(S.Charges), date: today(), hold: false });
     focusAfter = '#add-item';
   } else if (k === 'joint') {
     var ja = parseAmt(val('amount')); if (!val('item') || ja === null) return nudge(form);
