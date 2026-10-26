@@ -38,7 +38,7 @@
     color: #fff; display: grid; place-items: center; font-weight: 800; font-size: 15px; }
   nav { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; flex: 1; }
   nav::-webkit-scrollbar { display: none; }
-  nav button { border: 0; background: transparent; padding: 8px 14px; border-radius: 999px; color: var(--muted);
+  nav button { border: 0; background: transparent; padding: 8px 11px; border-radius: 999px; color: var(--muted);
     font-weight: 600; white-space: nowrap; }
   nav button:hover { color: var(--ink); background: var(--soft); }
   nav button.on { background: var(--ink); color: #fff; }
@@ -258,7 +258,7 @@
   #undoBtn:disabled { opacity: .45; cursor: default; }
   .toast-btn { margin-left: 12px; border: 0; background: #fff; color: var(--ink); font-weight: 700; padding: 5px 12px; border-radius: 8px; }
   #toast { display: flex; align-items: center; }
-  .search-wrap { flex: 0 1 240px; }
+  .search-wrap { flex: 0 1 190px; min-width: 120px; }
   #q { width: 100%; border: 1px solid var(--line); background: var(--soft); border-radius: 999px; padding: 8px 14px 8px 34px; outline: none;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237B8494' stroke-width='2.4' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-4-4'/%3E%3C/svg%3E");
     background-repeat: no-repeat; background-position: 12px center; background-size: 15px; }
@@ -412,6 +412,8 @@ function parseAmt(v) { var n = parseFloat(String(v).replace(/[$,\s]/g, '')); ret
 function sum(list, f) { return list.reduce(function (a, x) { return a + (+f(x) || 0); }, 0); }
 function uid(p) { return p + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function byOrder(a, b) { return (+a.order || 0) - (+b.order || 0); }
+// newest first: by charge date, then by when it was added (charges without a date go to the bottom)
+function newestFirst(a, b) { return String(b.date || '').localeCompare(String(a.date || '')) || ((+b.order || 0) - (+a.order || 0)); }
 function nextOrder(list) { return list.reduce(function (m, r) { return Math.max(m, +r.order || 0); }, 0) + 1; }
 function col(name) { return PALETTE[name] || PALETTE.slate; }
 function setting(id, dflt) { var s = S.Settings.filter(function (x) { return x.id === id; })[0]; return s ? s.value : dflt; }
@@ -531,7 +533,8 @@ function calc() {
     held: S.Charges.filter(function (c) { return c.hold; }),
     pend: pendingMath(),
     eric: tag.Eric + tag.Split / 2, arianna: tag.Arianna + tag.Split / 2,
-    inJoint: inJoint, jointLeft: inJoint - tag.Joint,
+    inJoint: inJoint, cash: sum(S.JointCash || [], function (j) { return j.amount; }),
+    jointLeft: inJoint - tag.Joint - sum(S.JointCash || [], function (j) { return j.amount; }),
     us1: us1, us15: us15, tot1: sum(b1, function (b) { return b.total; }), tot15: sum(b15, function (b) { return b.total; }),
     ourTotal: ourTotal, half: half, paycheck: half / 2, bank: half - us15,
     ferris: sum(S.Bills, function (b) { return b.total; }) - ourTotal,
@@ -628,7 +631,7 @@ function viewCards(m) {
 
   var card = cards.filter(function (c) { return c.id === selCard; })[0];
   if (!card) return h + '<div class="panel"><div class="empty">Add your first card to get started.</div></div>';
-  var items = S.Charges.filter(function (x) { return x.cardId === card.id; }).sort(byOrder).reverse();
+  var items = S.Charges.filter(function (x) { return x.cardId === card.id; }).sort(newestFirst);
   var liveItems = items.filter(function (x) { return !x.hold; }), heldItems = items.filter(function (x) { return x.hold; });
   var total = sum(liveItems, function (x) { return x.amount; });
   var heldTotal = sum(heldItems, function (x) { return x.amount; });
@@ -694,9 +697,11 @@ function viewCards(m) {
 }
 
 function viewJoint(m) {
-  var h = '<h1>Joint Account</h1><p class="sub">Change what’s in the joint account any time. Joint charges come from the Cards tab.</p>';
-  h += '<div class="tiles">' + tile('In the joint account', m.inJoint) + tile('Joint charges on cards', m.tag.Joint) +
-    tile('Left', m.jointLeft, { sign: true }) + '</div>';
+  var spent = m.tag.Joint + m.cash;
+  var h = '<h1>Joint Account</h1><p class="sub">What’s in the joint, minus joint charges on the cards and anything paid out of pocket.</p>';
+  h += '<div class="tiles">' + tile('In the joint account', m.inJoint) +
+    tile('Spent from the joint', spent, { hint: money(m.tag.Joint) + ' on cards · ' + money(m.cash) + ' out of pocket' }) +
+    tile('Left', m.jointLeft, { sign: true, hint: m.pend.joint ? 'After pending: ' + money(m.jointLeft - m.pend.joint) : '' }) + '</div>';
   var rows = S.Joint.slice().sort(byOrder);
   h += '<div class="cols"><section class="panel" style="--c:#E8590C"><div class="phead"><div class="grow"><div class="eyebrow">Money in</div>' +
     '<div style="font-size:20px;font-weight:800">What’s in the joint</div></div><div class="big num">' + money(m.inJoint) + '</div></div>';
@@ -707,17 +712,35 @@ function viewJoint(m) {
   h += '<form class="addrow" data-form="joint"><input class="f-item" name="item" placeholder="e.g. Groceries, extra 50" id="add-joint" autocomplete="off">' +
     '<input class="f-amt num" name="amount" placeholder="0.00" inputmode="decimal" autocomplete="off"><button class="btn primary">Add</button></form></section>';
 
+  h += '<div style="display:grid;gap:16px">';
+  var cash = (S.JointCash || []).slice().sort(newestFirst);
+  h += '<section class="panel" style="--c:#2B8A3E"><div class="phead"><div class="grow"><div class="eyebrow">Money out</div>' +
+    '<div style="font-size:20px;font-weight:800">Paid out of pocket</div></div><div class="big num">' + money(m.cash) + '</div></div>' +
+    '<form class="addrow" data-form="jointcash"><input class="f-item" name="item" placeholder="What did you pay for?" id="add-cash" autocomplete="off">' +
+    '<input class="f-amt num" name="amount" placeholder="0.00" inputmode="decimal" autocomplete="off"><button class="btn primary">Add</button></form><div class="rows">';
+  h += cash.length ? cash.map(function (j) {
+    return '<div class="row g-two"><div>' + textCell('JointCash', j.id, 'item', j.item) + (j.date ? '<div class="sub2">' + shortDate(j.date) + ' · out of pocket</div>' : '') + '</div>' +
+      amtCell('JointCash', j.id, 'amount', j.amount) + '<button class="x" data-act="del" data-t="JointCash" data-id="' + j.id + '">×</button></div>';
+  }).join('') : '<div class="empty">Nothing paid out of pocket.</div>';
+  h += '</div>' + (cash.length ? '<div class="pfoot"><span style="font-size:12px;color:var(--muted)">Clear these when the joint starts over. Search can still find them.</span>' +
+    '<button class="btn small" data-act="clearcash">Clear out-of-pocket</button></div>' : '') + '</section>';
+
   var cards = {}; S.Cards.forEach(function (c) { cards[c.id] = c; });
-  var jc = S.Charges.filter(function (c) { return c.who === 'Joint' && !c.hold; });
-  h += '<section class="panel" style="--c:#868E96"><div class="phead"><div class="grow"><div class="eyebrow">Money out</div>' +
-    '<div style="font-size:20px;font-weight:800">Joint charges on cards</div></div><div class="big num">' + money(m.tag.Joint) + '</div></div><div class="rows">';
-  h += jc.length ? jc.map(function (c) {
+  var jc = S.Charges.filter(function (c) { return c.who === 'Joint' && !c.hold; }).sort(newestFirst);
+  var jp = (S.Pending || []).filter(function (p) { return p.who === 'Joint'; });
+  var line = function (c, pending) {
     var card = cards[c.cardId] || { name: '?', color: 'slate' };
-    return '<div class="row g-ro"><div><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + col(card.color) +
-      ';margin-right:8px"></span>' + esc(c.item) + ' <span style="color:var(--muted);font-size:12px">· ' + esc(card.name) + '</span></div>' +
-      '<div class="r num' + (c.amount < 0 ? ' neg-txt' : '') + '">' + money(c.amount) + '</div></div>';
-  }).join('') : '<div class="empty">No joint charges.</div>';
-  h += '</div></section></div>';
+    return '<div class="row g-ro"' + (pending ? ' style="background:#FAFBFC"' : '') + '><div><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + col(card.color) +
+      ';margin-right:8px"></span>' + (pending ? '<i>' + esc(c.item) + '</i><span class="pchip">pending</span>' : esc(c.item)) +
+      ' <span style="color:var(--muted);font-size:12px">· ' + esc(card.name) + (c.date ? ' · ' + shortDate(c.date) : '') + '</span></div>' +
+      '<div class="r num' + (c.amount < 0 ? ' neg-txt' : '') + '"' + (pending ? ' style="color:var(--muted)"' : '') + '>' + money(c.amount) + '</div></div>';
+  };
+  h += '<section class="panel" style="--c:#868E96"><div class="phead"><div class="grow"><div class="eyebrow">Money out</div>' +
+    '<div style="font-size:20px;font-weight:800">Joint charges on cards</div></div><div class="big num">' + money(m.tag.Joint) +
+    (jp.length ? '<small>+ ' + money(m.pend.joint) + ' pending</small>' : '') + '</div></div><div class="rows">';
+  h += (jp.length || jc.length) ? jp.map(function (c) { return line(c, true); }).join('') + jc.map(function (c) { return line(c, false); }).join('')
+    : '<div class="empty">No joint charges.</div>';
+  h += '</div></section></div></div>';
   return h;
 }
 
@@ -855,24 +878,26 @@ function hl(text, q) {
   return esc(t.slice(0, i)) + '<mark>' + esc(t.slice(i, i + q.length)) + '</mark>' + esc(t.slice(i + q.length));
 }
 function cardTag(cardId) {
+  if (cardId === 'cash') return '<span class="cardtag" style="--c:#2B8A3E"><i></i>Out of pocket</span>';
   var c = find('Cards', cardId);
   return c ? '<span class="cardtag" style="--c:' + col(c.color) + '"><i></i>' + esc(c.name) + '</span>' : '<span class="cardtag" style="--c:#ADB5BD"><i></i>Deleted card</span>';
 }
 function viewSearch() {
   var q = query.trim();
   var now = S.Charges.concat((S.Pending || []).map(function (p) { var c = clone(p); c.isPending = true; return c; }))
+    .concat((S.JointCash || []).map(function (j) { var c = clone(j); c.cardId = 'cash'; c.who = 'Joint'; c.isCash = true; return c; }))
     .filter(function (x) { return matches(x, q); })
     .sort(function (a, b) { return String(b.date || '').localeCompare(String(a.date || '')) || (b.order - a.order); });
   var past = (pastCharges || []).filter(function (x) { return matches(x, q); })
     .sort(function (a, b) { return String(b.clearedOn).localeCompare(String(a.clearedOn)); });
   var h = '<h1>Search</h1><p class="sub">Searching every card for “' + esc(q) + '”. Type a store name or an amount like 85.39.</p>';
   h += '<section class="panel" style="--c:#4C6EF5"><div class="found' + (now.length ? '' : ' none') + '">' +
-    (now.length ? '✓ ' + now.length + ' match' + (now.length === 1 ? '' : 'es') + ' on your cards now' : '✗ Not on any card right now') + '</div>';
+    (now.length ? '✓ ' + now.length + ' match' + (now.length === 1 ? '' : 'es') + ' right now' : '✗ Not on any card or the joint right now') + '</div>';
   if (now.length) {
     h += '<div class="hrow g-res"><div>Charge</div><div class="c-card2">Card</div><div class="c-who">Who</div><div class="r">Amount</div></div><div class="rows">';
     now.slice(0, 200).forEach(function (x) {
-      h += '<div class="row g-res" data-act="goto" data-id="' + x.id + '" data-card="' + x.cardId + '" title="Open this card">' +
-        '<div><div>' + hl(x.item, q) + (x.isPending ? '<span class="pchip">pending</span>' : '') + (x.hold ? '<span class="hchip">on hold</span>' : '') + '</div><div class="sub2">' + (x.date ? shortDate(x.date) + ' · ' : '') + '<span class="c-card-m">' + (find('Cards', x.cardId) || { name: 'Deleted card' }).name.replace(/[<>&]/g, '') + '</span></div></div>' +
+      h += '<div class="row g-res"' + (x.isCash ? ' data-act="nav" data-v="joint"' : ' data-act="goto" data-id="' + x.id + '" data-card="' + x.cardId + '"') + ' title="Open">' +
+        '<div><div>' + hl(x.item, q) + (x.isPending ? '<span class="pchip">pending</span>' : '') + (x.hold ? '<span class="hchip">on hold</span>' : '') + '</div><div class="sub2">' + (x.date ? shortDate(x.date) + ' · ' : '') + '<span class="c-card-m">' + (x.cardId === 'cash' ? 'Out of pocket' : (find('Cards', x.cardId) || { name: 'Deleted card' }).name.replace(/[<>&]/g, '')) + '</span></div></div>' +
         '<div class="c-card2">' + cardTag(x.cardId) + '</div>' +
         '<div class="c-who">' + (x.who ? '<span style="color:' + WHO_COLOR[x.who] + ';font-weight:700;font-size:12.5px">' + esc(x.who) + '</span>' : '<span class="badge warn">Who?</span>') + '</div>' +
         '<div class="r num' + (x.amount < 0 ? ' neg-txt' : '') + '">' + money(x.amount) + '</div></div>';
@@ -1029,6 +1054,16 @@ document.addEventListener('click', function (e) {
   else if (a === 'card') { selCard = id; store('card', id); render(); }
   else if (a === 'pickwho') { lastWho = b.dataset.w; Array.prototype.forEach.call(b.parentNode.children, function (x) { x.classList.toggle('on', x === b); }); }
   else if (a === 'undo') { undo(); }
+  else if (a === 'clearcash') {
+    var cl = (S.JointCash || []).slice();
+    confirmBox('Clear out-of-pocket?', 'This takes the ' + cl.length + ' out-of-pocket item' + (cl.length === 1 ? '' : 's') + ' off the joint. Search can still find them.', 'Clear', function () {
+      undoLabel = 'clearing out-of-pocket';
+      var d = today();
+      cl.forEach(function (j) { upsert('History', { id: j.id, cardId: 'cash', item: j.item, amount: j.amount, who: 'Joint', date: j.date || '', clearedOn: d }); });
+      removeIds('JointCash', cl.map(function (j) { return j.id; })); render();
+      toast('Out-of-pocket cleared <button class="toast-btn" data-act="undo">Undo</button>', 8000);
+    });
+  }
   else if (a === 'hold') {
     var hc = find('Charges', id);
     undoLabel = (hc.hold ? 'taking “' : 'putting “') + hc.item + (hc.hold ? '” off hold' : '” on hold');
@@ -1180,6 +1215,10 @@ document.addEventListener('submit', function (e) {
     var ja = parseAmt(val('amount')); if (!val('item') || ja === null) return nudge(form);
     upsert('Joint', { id: uid('j'), item: val('item'), amount: ja, order: nextOrder(S.Joint) });
     focusAfter = '#add-joint';
+  } else if (k === 'jointcash') {
+    var ca = parseAmt(val('amount')); if (!val('item') || ca === null) return nudge(form);
+    upsert('JointCash', { id: uid('jc'), item: val('item'), amount: ca, date: today(), order: nextOrder(S.JointCash || []) });
+    focusAfter = '#add-cash';
   } else if (k === 'bill') {
     var tot = parseAmt(val('total')), us = parseAmt(val('us'));
     if (!val('name') || tot === null) return nudge(form);
