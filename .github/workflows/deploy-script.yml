@@ -51,11 +51,26 @@ jobs:
           DEPLOYMENT_ID: ${{ secrets.DEPLOYMENT_ID }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
-          npm install -g @google/clasp@3.4.1
+          npm install -g @google/clasp@3.4.1 --no-fund --no-audit --loglevel=error
           umask 077
-          printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json
+          # Copying from a terminal can wrap long lines; JSON needs no line breaks, so drop them.
+          printf '%s' "$CLASPRC_JSON" | tr -d '\r\n' > ~/.clasprc.json
+          if ! node -e 'const j=JSON.parse(require("fs").readFileSync(process.env.HOME+"/.clasprc.json","utf8")); const t=(j.tokens||{}).default||j; if(!t.refresh_token) process.exit(2)'; then
+            echo "::error::The CLASPRC_JSON secret isn't a complete sign-in. Paste it again from the setup script, from the first { to the last }."
+            exit 1
+          fi
+          DEP="$(printf '%s' "$DEPLOYMENT_ID" | tr -d '[:space:]')"
           cd server
-          clasp push --force
+          echo "Sending the code to Apps Script..."
+          if ! clasp push --force; then
+            echo "::error::Apps Script refused the upload. Check that the Apps Script API is on at script.google.com/home/usersettings."
+            exit 1
+          fi
           DESC="$(printf '%s' "${GITHUB_SHA::7} ${COMMIT_MSG:-manual deploy}" | head -n1 | cut -c1-90)"
-          clasp redeploy "$DEPLOYMENT_ID" --description "$DESC"
+          echo "Updating the web app..."
+          if ! clasp redeploy "$DEP" --description "$DESC"; then
+            echo "::error::The code uploaded but the web app wasn't updated. Check that DEPLOYMENT_ID is the AKfy... id of the active web app (Deploy > Manage deployments)."
+            exit 1
+          fi
           rm -f ~/.clasprc.json
+          echo "Deployed."
