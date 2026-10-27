@@ -58,9 +58,14 @@
 /* ---------------------------------------------------------------- loading the app with saving switched off */
 var START_LINE = 'if (CONN.url && CONN.key) load(); else showConnect();';
 
+// tests.html checks the real app; tests.html?app=beta checks the preview copy in beta/
+var WHICH = /[?&]app=beta\b/.test(location.search) ? 'beta' : 'live';
+var APP_FILE = WHICH === 'beta' ? 'beta/index.html' : 'index.html';
+var ORIG = {}, fetchCalls = [];
+
 function loadApp() {
-  return fetch('index.html?t=' + Date.now(), { cache: 'no-store' }).then(function (r) {
-    if (!r.ok) throw new Error('Could not load index.html (' + r.status + ')');
+  return fetch(APP_FILE + '?t=' + Date.now(), { cache: 'no-store' }).then(function (r) {
+    if (!r.ok) throw new Error('Could not load ' + APP_FILE + ' (' + r.status + ')');
     return r.text();
   }).then(function (html) {
     if (html.indexOf(START_LINE) < 0) throw new Error('The app\'s start line changed, so the test page can\'t safely switch off saving. Update START_LINE in tests.html.');
@@ -70,6 +75,9 @@ function loadApp() {
       fr.setAttribute('aria-hidden', 'true');
       fr.style.cssText = 'position:absolute;left:-10000px;top:0;width:1100px;height:800px;border:0';
       window.__appReady = function (A) {
+        // keep the app's own versions so the preview-safety checks can try them with the network cut off
+        ORIG = { api: A.api, send: A.send, flush: A.flush };
+        A.fetch = function (url) { fetchCalls.push(String(url)); return Promise.reject(new Error('no network on the test page')); };
         // nothing may leave the page: no saving, no loading, no pop-ups
         A.api = function () { return Promise.reject(new Error('Saving is switched off on the test page')); };
         A.send = function () {};
@@ -80,6 +88,8 @@ function loadApp() {
         resolve(A);
       };
       setTimeout(function () { reject(new Error('The app didn\'t start within 15 seconds')); }, 15000);
+      // the app's own files sit next to it, so the frame resolves links from the app's folder
+      html = html.replace('<head>', '<head><base href="' + new URL(APP_FILE, location.href).href + '">');
       fr.srcdoc = html;
       document.body.appendChild(fr);
     });
@@ -257,40 +267,68 @@ var SCENARIOS = [
   }
 ];
 
+SCENARIOS.push({
+  title: 'The preview can\'t save',
+  about: 'Pretends to be the preview copy and tries to save, back up and sync. None of it may reach Google.',
+  data: startingData(),
+  steps: [
+    { t: 'Preview mode on: try to save a change, a backup and a bank sync', run: function () {
+        fetchCalls.length = 0; A.PREVIEW = true; A.queue = [];
+        ORIG.send([{ op: 'upsert', table: 'Charges', row: { id: 'x', amount: 1 } }]);
+        var res = SCENARIOS[SCENARIOS.length - 1].res = {};
+        ['apply', 'backup', 'bankSync', 'bankDisconnect', 'bankConnect'].forEach(function (fn) {
+          ORIG.api(fn).then(function () { res[fn] = 'went through'; }, function (e) { res[fn] = /preview/i.test(e.message) ? 'blocked' : 'tried the network'; });
+        });
+        ORIG.api('getData').then(null, function () {});      // reading is allowed (cut off here by the test page)
+      }, check: function () { return [
+        yes('Nothing queued to save', A.queue.length === 0, A.queue.length + ' waiting to save'),
+        yes('Only the read (getData) tried to reach Google', fetchCalls.length === 1, fetchCalls.length + ' calls')]; } },
+    { t: 'Every write was refused by the preview itself', run: function () { A.PREVIEW = false; }, check: function () {
+        var res = SCENARIOS[SCENARIOS.length - 1].res;
+        return ['apply', 'backup', 'bankSync', 'bankDisconnect', 'bankConnect'].map(function (fn) { return yes(fn + ' blocked', res[fn] === 'blocked', res[fn] || 'no answer'); }); } }
+  ]
+});
+
 /* ---------------------------------------------------------------- run and show */
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
-function runAll() {
+function tick() { return new Promise(function (r) { setTimeout(r, 0); }); }   // lets the app's promises settle between steps
+
+async function runAll() {
   var total = 0, failed = 0, html = '';
-  SCENARIOS.forEach(function (sc) {
+  for (var s = 0; s < SCENARIOS.length; s++) {
+    var sc = SCENARIOS[s];
     sc.ids = {};
     A.S = JSON.parse(JSON.stringify(sc.data)); A.prep(); A.undoStack.length = 0;
     html += '<section><h2>' + esc(sc.title) + '</h2><p>' + esc(sc.about) + '</p>';
     var broken = false;
-    sc.steps.forEach(function (st, i) {
+    for (var i = 0; i < sc.steps.length; i++) {
+      var st = sc.steps[i];
       html += '<div class="step"><div class="step-title"><span class="n">' + (i + 1) + '</span>' + esc(st.t) + '</div>';
-      if (broken) { html += '<div class="err">Skipped because an earlier step failed to run.</div></div>'; return; }
+      if (broken) { html += '<div class="err">Skipped because an earlier step failed to run.</div></div>'; continue; }
       var checks;
-      try { st.run(); checks = st.check(); }
-      catch (e) { broken = true; total++; failed++; html += '<div class="err">This step crashed: ' + esc(e && (e.stack || e.message) || e) + '</div></div>'; return; }
+      try { st.run(); await tick(); checks = st.check(); }
+      catch (e) { broken = true; total++; failed++; html += '<div class="err">This step crashed: ' + esc(e && (e.stack || e.message) || e) + '</div></div>'; continue; }
       html += '<ul class="checks">' + checks.map(function (c) {
         total++; if (!c.ok) failed++;
         return '<li class="' + (c.ok ? 'pass' : 'fail') + '"><span class="mark">' + (c.ok ? '✓' : '✗') + '</span><span>' + esc(c.label) + '</span>' +
           '<span class="val">' + (c.ok ? esc(c.want) : (c.want ? 'expected ' + esc(c.want) + ', got ' + esc(c.got) : esc(c.got))) + '</span></li>';
       }).join('') + '</ul></div>';
-    });
+    }
     html += '</section>';
-  });
+  }
   document.getElementById('out').innerHTML = html;
   var b = document.getElementById('banner');
   b.className = 'banner ' + (failed ? 'bad' : 'ok');
-  b.innerHTML = failed ? failed + ' of ' + total + ' checks failed<small>Don\'t ship until these pass.</small>'
-                       : 'All ' + total + ' checks passed<small>The money math matches the plan.</small>';
-  document.title = (failed ? '✗ ' : '✓ ') + 'Money-math tests';
-  window.__result = { total: total, failed: failed };
+  var which = WHICH === 'beta' ? 'Preview copy (beta/)' : 'Real app';
+  b.innerHTML = (failed ? failed + ' of ' + total + ' checks failed' : 'All ' + total + ' checks passed') + ' · ' + which +
+    '<small>' + (failed ? 'Don\'t ship until these pass.' : 'The money math matches the plan.') + ' ' +
+    (WHICH === 'beta' ? '<a href="tests.html">Test the real app</a>' : '<a href="tests.html?app=beta">Test the preview</a>') + '</small>';
+  document.title = (failed ? '✗ ' : '✓ ') + 'Money-math tests · ' + which;
+  window.__result = { total: total, failed: failed, app: WHICH };
 }
 
-loadApp().then(function (app) { A = app; runAll(); }).catch(function (e) {
+loadApp().then(function (app) { A = app; return runAll(); }).catch(function (e) {
   var b = document.getElementById('banner');
   b.className = 'banner bad'; b.innerHTML = 'The tests couldn\'t run<small>' + esc(e && e.message || e) + '</small>';
   window.__result = { total: 0, failed: 1, error: String(e && e.message || e) };

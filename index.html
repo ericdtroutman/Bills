@@ -406,6 +406,11 @@
     .g-bill { grid-template-columns: 16px 26px 1fr 78px 26px 52px 20px; }
     .g-bill .c-total { display: none; }
   }
+  .preview-bar { position: sticky; top: 0; z-index: 30; background: #FFF3BF; color: #5C3D00; border-bottom: 2px solid #FAB005;
+    padding: 8px 16px; font-size: 13px; line-height: 1.4; }
+  .preview-bar a { margin-left: 10px; color: #5C3D00; font-weight: 700; }
+  .preview-bar .preview-new { font-size: 12px; opacity: .85; margin-top: 2px; }
+  .preview-bar ~ header.top { top: 0; position: relative; }
 </style>
 </head>
 <body>
@@ -454,7 +459,25 @@ var showPw = {};                    // which passwords are showing
 
 /* ---- connection to your Google script (link + passcode are kept only on this device) */
 var CONN = { url: remember('url'), key: remember('key') };
+
+/* ---- Preview: the copy of this page in beta/ reads your real data but never saves or changes anything.
+   New features are built there first; they move to the real page only once Eric has tried them. */
+var PREVIEW = /\/beta\/(index\.html)?$/.test(location.pathname);
+var PREVIEW_READS = { getData: 1, getHistory: 1, ping: 1 };
+var PREVIEW_NEW = [];      // what's being tried in the preview right now, one short line each
+function previewBanner() {
+  if (!PREVIEW) return;
+  document.title = 'Bills · Preview';
+  var b = document.createElement('div');
+  b.className = 'preview-bar';
+  b.innerHTML = '<b>Preview.</b> Your real numbers, but nothing here saves. Reload to start over.' +
+    '<a href="../">Open the real app</a>' +
+    '<div class="preview-new">' + (PREVIEW_NEW.length ? 'Trying out: ' + PREVIEW_NEW.map(esc).join(' · ') : 'Nothing new yet: same as the real app.') + '</div>';
+  document.body.insertBefore(b, document.body.firstChild);
+}
+
 function api(fn, extra) {
+  if (PREVIEW && !PREVIEW_READS[fn]) return Promise.reject(new Error('This is the preview, so nothing is saved or changed. Use the real app for that.'));
   var req = { key: CONN.key, fn: fn };
   if (extra) Object.keys(extra).forEach(function (k) { req[k] = extra[k]; });
   return fetch(CONN.url, {
@@ -499,7 +522,10 @@ function setting(id, dflt) { var s = S.Settings.filter(function (x) { return x.i
 /* ======================================================================= saving */
 var queue = [], busy = false, fails = 0;
 function status(text, err) { var el = document.getElementById('status'); el.textContent = text; el.className = err ? 'err' : ''; }
-function send(ops) { queue = queue.concat(ops); flush(); }
+function send(ops) {
+  if (PREVIEW) { status('Preview: not saved'); return; }
+  queue = queue.concat(ops); flush();
+}
 function flush() {
   if (busy || !queue.length) return;
   busy = true;
@@ -1960,6 +1986,7 @@ document.addEventListener('click', function (e) {
     });
   }
   else if (a === 'logout') {
+    if (PREVIEW) { toast('The preview shares your sign-in with the real app. Log out from the real app.'); return; }
     confirmBox('Log out on this device?', 'This forgets the app link and passcode on this device only. Your bills stay safe in your Google Sheet.', 'Log out', function () {
       forget('url'); forget('key'); CONN = { url: null, key: null }; S = null; showConnect();
     });
@@ -2165,6 +2192,7 @@ function load() {
   });
 }
 
+previewBanner();
 if (CONN.url && CONN.key) load(); else showConnect();
 </script>
 </body>

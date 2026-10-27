@@ -7,8 +7,15 @@ Eric's family budget app. The page (index.html) is served by GitHub Pages from m
 - **Script:** edit server/Code.gs (or other files in server/), commit, push to main. `.github/workflows/deploy-script.yml` runs `clasp push --force` and `clasp redeploy $DEPLOYMENT_ID`, so the web app link never changes. Check the run in the Actions tab.
 - Commit straight to main with a plain-language message. Eric doesn't review PRs.
 
+## Preview first (beta/)
+- `beta/index.html` is the **preview**: the same app, opened at the site + `/beta/`. It reads Eric's real data (getData, getHistory) but `PREVIEW` blocks every save, backup and bank call, and a yellow bar says so. Reload resets it.
+- **Build new features in beta/index.html first.** List each one in `PREVIEW_NEW` (one short line) so the bar shows what's being tried. Eric tries it on his phone.
+- **Move a feature to the real app (root index.html) only when Eric says it's good**, tests pass for both (`tests.html` and `tests.html?app=beta`), and it's between paydays (one feature per pay period). Then remove its line from `PREVIEW_NEW`.
+- Fixes and changes to shared code go into **both** files. `diff index.html beta/index.html` should show only features still in preview.
+- Script changes a preview feature needs must be **additive only** (a new tab or a new field the real app ignores) so they can ship to Apps Script before the page change does.
+
 ## Rules
-- **tests.html must pass before any change to the money math ships.** It loads index.html in a hidden frame with saving switched off and replays the Pay Period Plan walkthrough. Run it headless before pushing (serve the repo with `python3 -m http.server`, open `/tests.html` in Playwright, read `window.__result`), and add checks there whenever the money math changes. Live copy: the GitHub Pages site + `/tests.html`.
+- **tests.html must pass before any change to the money math ships.** It loads index.html in a hidden frame with saving switched off and replays the Pay Period Plan walkthrough. Run it headless before pushing for both versions (serve the repo with `python3 -m http.server`, open `/tests.html` and `/tests.html?app=beta` in Playwright, read `window.__result`), and add checks there whenever the money math changes. Live copy: the GitHub Pages site + `/tests.html`.
 - This repo is **public**. Never write the passcode, tokens, the deployment id or the web app URL into any file. The passcode lives in Script Properties (`PASSCODE`); the deploy sign-in and deployment id are repository secrets.
 - New Sheet columns go at the **end** of a table in `TABLES`; `sheet_()` adds missing headers on its own.
 - Remind Eric to tap **Back up** in the app before a change that touches the Sheet's structure.
