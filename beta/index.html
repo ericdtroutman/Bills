@@ -464,7 +464,7 @@ var CONN = { url: remember('url'), key: remember('key') };
    New features are built there first; they move to the real page only once Eric has tried them. */
 var PREVIEW = /\/beta\/(index\.html)?$/.test(location.pathname);
 var PREVIEW_READS = { getData: 1, getHistory: 1, ping: 1 };
-var PREVIEW_NEW = [];      // what's being tried in the preview right now, one short line each
+var PREVIEW_NEW = ['Joint page: joint checking straight from the bank'];      // what's being tried in the preview right now, one short line each
 function previewBanner() {
   if (!PREVIEW) return;
   document.title = 'Bills · Preview';
@@ -821,6 +821,7 @@ function viewJoint(m) {
   h += '<div class="tiles">' + tile('In the joint account', m.inJoint) +
     tile('Spent from the joint', spent, { hint: money(m.tag.Joint) + ' on cards · ' + money(m.cash) + ' out of pocket' }) +
     tile('Left', m.jointLeft, { sign: true, hint: m.pend.joint ? 'After pending: ' + money(m.jointLeft - m.pend.joint) : '' }) + '</div>';
+  h += jointBankPanel();
   var rows = S.Joint.slice().sort(byOrder);
   h += '<div class="cols"><section class="panel" style="--c:#E8590C"><div class="phead"><div class="grow"><div class="eyebrow">Money in</div>' +
     '<div style="font-size:20px;font-weight:800">What’s in the joint</div></div><div class="big num">' + money(m.inJoint) + '</div></div>';
@@ -860,6 +861,26 @@ function viewJoint(m) {
   h += (jp.length || jc.length) ? jp.map(function (c) { return line(c, true); }).join('') + jc.map(function (c) { return line(c, false); }).join('')
     : '<div class="empty">No joint charges.</div>';
   h += '</div></section></div></div>';
+  return h;
+}
+
+/* ---- joint checking straight from the bank (preview): the script keeps a copy of its recent lines in JointBank */
+function jointAcct() {
+  return (S.BankAccounts || []).filter(function (a) { return !a.cardId && /joint/i.test(a.name) && /check/i.test(a.name); })[0] || null;
+}
+function jointBankPanel() {
+  var acct = jointAcct();
+  if (!acct) return '';
+  var rows = (S.JointBank || []).slice().sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
+  var h = '<section class="panel" style="--c:#FAB005;margin-bottom:16px"><div class="phead"><div class="grow"><div class="eyebrow">New · preview</div>' +
+    '<div style="font-size:20px;font-weight:800">Joint checking at the bank</div><div class="sub2">' + esc(acct.name) + ' · what M&amp;T says now</div></div>' +
+    '<div class="big num">' + money(acct.balance) + '</div></div><div class="rows">';
+  h += rows.length ? rows.map(function (r) {
+    return '<div class="row g-ro"><div>' + (r.pending ? '<i>' + esc(r.name) + '</i><span class="pchip">pending</span>' : esc(r.name)) +
+      ' <span style="color:var(--muted);font-size:12px">· ' + shortDate(r.date) + '</span></div>' +
+      '<div class="r num' + (r.amount > 0 ? ' pos-txt' : '') + '">' + (r.amount > 0 ? '+' : '−') + money(Math.abs(r.amount)) + '</div></div>';
+  }).join('') : '<div class="empty">No lines yet. They start coming in with the next daily bank sync.</div>';
+  h += '</div><div class="pfoot"><span style="font-size:12px;color:var(--muted)">Coming next: answer each line (joint spending, bills, money in, card money) so the joint’s Left and the shortfall count debit-card spending too.</span></div></section>';
   return h;
 }
 
@@ -2183,7 +2204,7 @@ function load() {
     return api('getData');
   }).then(function (data) {
     store('url', CONN.url); store('key', CONN.key);   // remember only once they work
-    S = data; prep(); status('All changes saved'); render();
+    S = data; prep(); status(PREVIEW ? 'Preview: nothing saves' : 'All changes saved'); render();
   }, function (err) {
     queue = pending.concat(queue);
     if (authProblem(err)) { showConnect(cleanMsg(err.message)); return; }

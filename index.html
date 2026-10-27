@@ -2183,7 +2183,7 @@ function load() {
     return api('getData');
   }).then(function (data) {
     store('url', CONN.url); store('key', CONN.key);   // remember only once they work
-    S = data; prep(); status('All changes saved'); render();
+    S = data; prep(); status(PREVIEW ? 'Preview: nothing saves' : 'All changes saved'); render();
   }, function (err) {
     queue = pending.concat(queue);
     if (authProblem(err)) { showConnect(cleanMsg(err.message)); return; }
