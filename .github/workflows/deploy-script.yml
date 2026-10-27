@@ -72,5 +72,16 @@ jobs:
             echo "::error::The code uploaded but the web app wasn't updated. Check that DEPLOYMENT_ID is the AKfy... id of the active web app (Deploy > Manage deployments)."
             exit 1
           fi
+          # Report every deployment and its version as a notice, so it's visible without logs.
+          # Ids are shortened to their last 6 characters: this repo is public.
+          if clasp list-deployments --json > /tmp/deps.json 2>/dev/null; then
+            DEP="$DEP" node -e '
+              const d = JSON.parse(require("fs").readFileSync("/tmp/deps.json", "utf8"));
+              const list = Array.isArray(d) ? d : (d.deployments || []);
+              const lines = list.map(x => "…" + String(x.deploymentId).slice(-6) + " " + (x.versionNumber ? "v" + x.versionNumber : "HEAD (always newest code)") +
+                (x.deploymentId === process.env.DEP ? " ← updated by this deploy" : ""));
+              console.log("::notice title=Web app deployments (" + list.length + ")::" + lines.join(" | "));
+            ' || true
+          fi
           rm -f ~/.clasprc.json
           echo "Deployed."
