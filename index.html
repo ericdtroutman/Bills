@@ -1225,7 +1225,9 @@ function moneyMath(m) {
     two: two, cut: cut, lastT: lastT, potOfRow: potOfRow, lines: lines, dupes: dupes, dupeOf: dupeOf, ledger: led, used: used, owed: owed, owedNet: owedNet, credit: credit,
     P: P, out: out, really: really, oldPot: oldPot, newPot: newPot, trayAmt: trayAmt, billsAmt: billsAmt, waiting: waiting, waitAmt: waitAmt, waitOut: waitOut,
     suspended: suspended, linkPending: linkPending, candidates: candidates, pairFor: pairFor, manual: manual, bank: bank, rowById: rowById,
-    jointShort: Math.max(0, -(m.jointLeft - m.pend.joint))
+    jointShort: r2(Math.max(0, -(m.jointLeft - m.pend.joint))),
+    // when the joint runs short, Eric and Arianna split it: Eric's part is half (anything they can't cover comes from savings)
+    jointHalf: r2(Math.max(0, -(m.jointLeft - m.pend.joint)) / 2)
   };
 }
 
@@ -1386,7 +1388,7 @@ function questionsHtml(mm) {
     } else {
       var mate = passIn.filter(function (p) { return Math.abs(p.amount - amt) <= 5; })[0];
       var billsPot = mm.two ? mm.P['new'] : mm.P.cur;
-      var withExtra = oldShare + mm.jointShort;
+      var withExtra = oldShare + mm.jointHalf;
       if (mate) hint = '<div class="q-hint">Goes with ' + esc(mate.name) + ' ' + money(mate.amount) + ' from ' + shortDate(mate.date) + '? ' +
         '<button class="qbtn on" data-act="ckpair" data-id="' + esc(id) + '" data-with="' + esc(mate.id) + '">Yes, they go together</button></div>';
       else if (!billsPot.hasBills && Math.abs(amt - mm.billsAmt) <= 5) hint = '<div class="q-hint">Is this the bills transfer (' + money(mm.billsAmt) + ')? ' + qb(id, 'bills', 'Yes', 'on') + '</div>';
@@ -1544,14 +1546,14 @@ function wrapPanel(mm, m) {
   var sent = old.rows.filter(function (r) { return r.kind === 'cards'; });
   var sentAmt = sum(sent, function (r) { return Math.abs(r.amount); });
   var extraDone = old.joint > 0.009;
-  var suggest = extraDone ? 0 : r2(mm.jointShort);
+  var suggest = extraDone ? 0 : mm.jointHalf;
   var toSave = r2(mm.oldPot - (owedOld > 0.5 ? 0 : 0) - suggest);
   var cardsOk = owedOld <= 0.5;
   var savedOk = old.saved > 0 && mm.oldPot - suggest <= 5;
   var steps = [
     { ok: true, text: 'New paycheck in: ' + money(mm.newest.amount) + ' on ' + shortDate(mm.newest.date) + '. It starts the new pay period.' },
     { ok: cardsOk, text: cardsOk ? (sentAmt ? 'Sent ' + money(sentAmt) + ' to the joint for the cards' + (extraDone ? ', including ' + money(old.joint) + ' to cover the joint' : '') : 'Nothing owed on the cards')
-        : 'Send <b>' + money(owedOld + suggest) + '</b> to the joint: your card share ' + money(owedOld) + (suggest ? ' + ' + money(suggest) + ' because the joint is short' : '') +
+        : 'Send <b>' + money(owedOld + suggest) + '</b> to the joint: your card share ' + money(owedOld) + (suggest ? ' + ' + money(suggest) + ', your half of the ' + money(mm.jointShort) + ' the joint is short' : '') +
           '. <span class="sub2">Tap + Add when you send it, or answer it when the bank shows it.</span>' },
     { ok: savedOk, text: savedOk ? 'Moved ' + money(old.saved) + ' to savings' : toSave > 0.5 ? 'Move <b>' + money(toSave) + '</b> to M&amp;T savings or Ally' + (old.saved ? ' (moved ' + money(old.saved) + ' so far)' : '') : 'Nothing left to move to savings' }
   ];

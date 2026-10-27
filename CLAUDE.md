@@ -8,6 +8,7 @@ Eric's family budget app. The page (index.html) is served by GitHub Pages from m
 - Commit straight to main with a plain-language message. Eric doesn't review PRs.
 
 ## Rules
+- **tests.html must pass before any change to the money math ships.** It loads index.html in a hidden frame with saving switched off and replays the Pay Period Plan walkthrough. Run it headless before pushing (serve the repo with `python3 -m http.server`, open `/tests.html` in Playwright, read `window.__result`), and add checks there whenever the money math changes. Live copy: the GitHub Pages site + `/tests.html`.
 - This repo is **public**. Never write the passcode, tokens, the deployment id or the web app URL into any file. The passcode lives in Script Properties (`PASSCODE`); the deploy sign-in and deployment id are repository secrets.
 - New Sheet columns go at the **end** of a table in `TABLES`; `sheet_()` adds missing headers on its own.
 - Remind Eric to tap **Back up** in the app before a change that touches the Sheet's structure.

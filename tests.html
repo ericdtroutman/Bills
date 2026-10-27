@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Money-math tests</title>
+<link rel="icon" href="icon-192.png">
+<style>
+  :root {
+    --bg: #F4F5F8; --surface: #FFFFFF; --ink: #161B26; --muted: #6B7484; --line: #E7E9EE;
+    --good: #2B8A3E; --good-soft: #E6F6EA; --bad: #E03131; --bad-soft: #FDECEC; --accent: #4C6EF5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #11141A; --surface: #1A1E26; --ink: #E8EAEE; --muted: #9AA3B2; --line: #2A303B;
+      --good: #51CF66; --good-soft: #17301E; --bad: #FF6B6B; --bad-soft: #3A1C1C; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Arial, sans-serif; }
+  main { max-width: 920px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 18px; }
+  .banner { border-radius: 14px; padding: 16px 18px; font-weight: 700; font-size: 16px; margin-bottom: 18px; }
+  .banner.ok { background: var(--good-soft); color: var(--good); }
+  .banner.bad { background: var(--bad-soft); color: var(--bad); }
+  .banner.wait { background: var(--surface); color: var(--muted); }
+  .banner small { display: block; font-weight: 500; font-size: 13px; margin-top: 2px; color: inherit; opacity: .85; }
+  section { background: var(--surface); border-radius: 14px; margin-bottom: 16px; overflow: hidden;
+    box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 4px 16px rgba(16,24,40,.05); }
+  section > h2 { font-size: 16px; margin: 0; padding: 14px 18px 4px; }
+  section > p { margin: 0; padding: 0 18px 10px; color: var(--muted); font-size: 13px; }
+  .step { border-top: 1px solid var(--line); padding: 10px 18px; }
+  .step-title { font-weight: 600; }
+  .step-title .n { display: inline-block; min-width: 22px; color: var(--muted); }
+  .checks { margin: 6px 0 0; padding: 0; list-style: none; }
+  .checks li { display: grid; grid-template-columns: 20px 1fr auto; gap: 8px; padding: 3px 0; font-size: 13px; align-items: baseline; }
+  .checks .mark { font-weight: 800; }
+  .checks .pass .mark { color: var(--good); }
+  .checks .fail { color: var(--bad); }
+  .checks .val { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  .err { color: var(--bad); font-size: 13px; padding: 4px 0; white-space: pre-wrap; }
+  .foot { color: var(--muted); font-size: 12px; margin-top: 20px; }
+  a { color: var(--accent); }
+  @media (max-width: 560px) { .checks li { grid-template-columns: 20px 1fr; } .checks .val { grid-column: 2; text-align: left; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Money-math tests</h1>
+  <p class="sub">Runs the app's own money math on made-up accounts and checks every number. Nothing here reads or changes your Google Sheet.</p>
+  <div id="banner" class="banner wait">Running…</div>
+  <div id="out"></div>
+  <p class="foot">Loads <a href="./">the app page</a> in a hidden frame with saving switched off, then drives it the way you would. Add new checks here whenever the money math changes.</p>
+</main>
+
+<script>
+/* ---------------------------------------------------------------- loading the app with saving switched off */
+var START_LINE = 'if (CONN.url && CONN.key) load(); else showConnect();';
+
+function loadApp() {
+  return fetch('index.html?t=' + Date.now(), { cache: 'no-store' }).then(function (r) {
+    if (!r.ok) throw new Error('Could not load index.html (' + r.status + ')');
+    return r.text();
+  }).then(function (html) {
+    if (html.indexOf(START_LINE) < 0) throw new Error('The app\'s start line changed, so the test page can\'t safely switch off saving. Update START_LINE in tests.html.');
+    html = html.replace(START_LINE, 'parent.__appReady(window);');
+    return new Promise(function (resolve, reject) {
+      var fr = document.createElement('iframe');
+      fr.setAttribute('aria-hidden', 'true');
+      fr.style.cssText = 'position:absolute;left:-10000px;top:0;width:1100px;height:800px;border:0';
+      window.__appReady = function (A) {
+        // nothing may leave the page: no saving, no loading, no pop-ups
+        A.api = function () { return Promise.reject(new Error('Saving is switched off on the test page')); };
+        A.send = function () {};
+        A.flush = function () {};
+        A.toast = function () {};
+        A.render = function () {};
+        A.addEventListener('error', function (e) { reject(e.error || new Error(e.message)); });
+        resolve(A);
+      };
+      setTimeout(function () { reject(new Error('The app didn\'t start within 15 seconds')); }, 15000);
+      fr.srcdoc = html;
+      document.body.appendChild(fr);
+    });
+  });
+}
+
+/* ---------------------------------------------------------------- made-up accounts */
+// Thursday night before payday, the starting point of the Pay Period Plan walkthrough:
+// M&T has $1,000, Eric's card share is $620.80, the joint is $108.40 short (Eric's half: $54.20).
+function startingData(o) {
+  o = o || {};
+  return {
+    Cards: [{ id: 'c_amex', name: 'Amex', color: 'blue', paid: false, order: 1 },
+            { id: 'c_chase', name: 'Chase', color: 'violet', paid: false, order: 2 }],
+    Charges: [
+      { id: 'ch_eric', cardId: 'c_amex', item: 'TARGET', amount: 500.00, who: 'Eric', order: 1, date: '2026-10-15', bankId: 'x1', hold: false, settled: '' },
+      { id: 'ch_split', cardId: 'c_chase', item: 'COSTCO', amount: 241.60, who: 'Split', order: 2, date: '2026-10-18', bankId: 'x2', hold: false, settled: '' },
+      { id: 'ch_joint', cardId: 'c_amex', item: 'NATIONAL FUEL', amount: 1108.40, who: 'Joint', order: 3, date: '2026-10-16', bankId: 'x3', hold: false, settled: '' }
+    ],
+    Joint: [{ id: 'j_in', item: 'Money in the joint', amount: o.jointIn != null ? o.jointIn : 1000, order: 1 }],
+    JointCash: [],
+    Bills: [{ id: 'b_1st', payOn: '1st', name: 'Mortgage and more', total: 3000, us: 2812, paid: false, order: 1, status: '' },
+            { id: 'b_15th', payOn: '15th', name: 'Utilities and more', total: 3000, us: 2812, paid: false, order: 2, status: '' }],
+    Funds: [], FundEntries: [], People: [], Gifts: [],
+    Settings: [{ id: 'periodPay', value: 'ck_pay_old' }, { id: 'cardLedger', value: '[]' }],
+    BankAccounts: [{ id: 'mt|1', name: 'M&T checking', bank: 'M&T Bank', cardId: 'checking', balance: 1000 },
+                   { id: 'ally|1', name: 'Ally savings', bank: 'Ally', cardId: '', balance: 5000 }],
+    Imported: [], Pending: [], Periods: [], TypeRules: [], Rules: [], CheckPending: [],
+    Checking: [
+      { id: 'ck_pay_old', date: '2026-10-09', name: 'KENMORE TOWN OF PAYROLL', amount: 1862.12, kind: 'pay', pairId: '', period: '', order: 1, pot: '', manual: false, note: '', extra: 0, credit: 0, nolink: false },
+      { id: 'ck_bills_old', date: '2026-10-12', name: 'WEB TRANSFER TO JOINT', amount: -1406, kind: 'bills', pairId: '', period: '', order: 2, pot: '', manual: false, note: '', extra: 0, credit: 0, nolink: false },
+      { id: 'ck_tops', date: '2026-10-15', name: 'TOPS MARKETS 123', amount: -76.92, kind: 'spend', pairId: '', period: '', order: 3, pot: '', manual: false, note: '', extra: 0, credit: 0, nolink: false }
+    ]
+  };
+}
+
+/* ---------------------------------------------------------------- helpers that act like Eric */
+var A;
+function mm() { return A.moneyMath(A.calc()); }
+function setBalance(n) { A.S.BankAccounts[0].balance = n; }
+function bankLine(id, date, name, amount, kind) {
+  A.S.Checking.push({ id: id, date: date, name: name, amount: amount, kind: kind || '', pairId: '', period: '', order: A.S.Checking.length + 1,
+                      pot: '', manual: false, note: '', extra: 0, credit: 0, nolink: false });
+}
+// + Add on My Money, filled in and submitted through the app's own form
+function typeIn(dir, amount, kind, date, note) {
+  A.addEntryBox();
+  var d = A.document;
+  if (dir === 'in') d.querySelector('[data-dir="in"]').click();
+  var f = d.querySelector('#mform');
+  f.amount.value = String(amount); f.kind.value = kind; f.note.value = note || ''; f.date.value = date; f.next.checked = false;
+  var before = A.S.Checking.length;
+  f.onsubmit({ preventDefault: function () {} });
+  return A.S.Checking[before].id;
+}
+function wrapText() { var div = A.document.createElement('div'); div.innerHTML = A.wrapPanel(mm(), A.calc()); return div.textContent.replace(/\s+/g, ' '); }
+function pageText(view) { var div = A.document.createElement('div'); div.innerHTML = A['view' + view](A.calc()); return div.textContent.replace(/\s+/g, ' '); }
+function fmt(n) { return (n < 0 ? '−' : '') + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+
+/* checks: [label, expected, got] for money, or [label, true/false] for yes/no, or [label, 'text', haystack] for "says" */
+function money(label, want, got) { return { label: label, ok: Math.abs((+got || 0) - want) < 0.005, want: fmt(want), got: fmt(+got || 0) }; }
+function yes(label, ok, detail) { return { label: label, ok: !!ok, want: '', got: ok ? '' : (detail || 'no') }; }
+function says(label, text, hay) { return { label: label, ok: hay.indexOf(text) >= 0, want: '', got: hay.indexOf(text) >= 0 ? '' : 'It says: “' + hay.slice(0, 220) + '…”' }; }
+function pagesDraw() {
+  var bad = [];
+  ['Money', 'Joint', 'Cards'].forEach(function (v) { try { A['view' + v](A.calc()); } catch (e) { bad.push(v + ': ' + e.message); } });
+  return yes('My Money, Joint and Cards pages draw without errors', !bad.length, bad.join('; '));
+}
+
+/* ---------------------------------------------------------------- the scenarios */
+var SCENARIOS = [
+  {
+    title: 'The Friday-to-Monday walkthrough from the Pay Period Plan',
+    about: 'Every number from the plan\'s step-by-step table, with your rule that the joint shortfall is split: $54.20 is your half of $108.40.',
+    data: startingData(),
+    steps: [
+      { t: 'Thursday night, before payday', run: function () {}, check: function () { var m = mm(); return [
+          yes('One pot (no new paycheck yet)', !m.two),
+          money('Card share owed (Eric + half of Split)', 620.80, m.owedNet),
+          money('Joint is short', 108.40, m.jointShort),
+          money('Your half of the shortfall', 54.20, m.jointHalf),
+          money('Really yours', 379.20, m.really), pagesDraw()]; } },
+      { t: 'Paycheck $1,862.12 lands; $1,406 set aside for bills', run: function () {
+          bankLine('ck_pay_new', '2026-10-23', 'KENMORE TOWN OF PAYROLL', 1862.12, 'pay'); setBalance(2862.12);
+        }, check: function () { var m = mm(), w = wrapText(); return [
+          yes('Two pots during the overlap', m.two),
+          money('This pay period', 456.12, m.newPot), money('Left from last pay period', 379.20, m.oldPot),
+          money('Really yours', 835.32, m.really),
+          says('Checklist says send $675.00 to the joint', 'Send $675.00 to the joint', w),
+          says('…as $620.80 cards + your half of the shortfall', 'your card share $620.80 + $54.20, your half of the $108.40 the joint is short', w),
+          says('Checklist says move $325.00 to savings', 'Move $325.00', w), pagesDraw()]; } },
+      { t: '$30 gas on debit posts (dated after payday)', run: function () {
+          bankLine('ck_gas', '2026-10-24', 'SUNOCO 0123', -30); setBalance(2832.12);
+        }, check: function () { var m = mm(); return [
+          money('This pay period', 426.12, m.newPot), money('Left from last pay period', 379.20, m.oldPot), money('Really yours', 805.32, m.really)]; } },
+      { t: '$25 Wegmans on a card, Eric, pending, held for next time', run: function () {
+          A.S.Pending.push({ id: 'p_weg', cardId: 'c_amex', item: 'WEGMANS', amount: 25, who: 'Eric', date: '2026-10-25', bankId: 'b_weg', hold: true });
+        }, check: function () { var m = mm(); return [
+          money('This pay period', 401.12, m.newPot), money('Left from last pay period', 379.20, m.oldPot), money('Really yours', 780.32, m.really),
+          says('Checklist still says send $675.00', 'Send $675.00 to the joint', wrapText())]; } },
+      { t: 'You send $1,406 for bills (+ Add, Bills transfer)', run: function () {
+          SCENARIOS[0].ids.bills = typeIn('out', 1406, 'bills', '2026-10-26', 'Bills');
+        }, check: function () { var m = mm(); return [
+          money('This pay period', 401.12, m.newPot), money('Left from last pay period', 379.20, m.oldPot), money('Really yours', 780.32, m.really)]; } },
+      { t: 'You send $675 to the joint (+ Add, Card transfer)', run: function () {
+          SCENARIOS[0].ids.cards = typeIn('out', 675, 'cards', '2026-10-26', 'Cards + joint');
+        }, check: function () {
+          var m = mm(), row = A.find('Checking', SCENARIOS[0].ids.cards);
+          var paid = A.S.Charges.filter(function (c) { return /^ct:/.test(c.settled || ''); }).map(function (c) { return c.id; }).sort().join(',');
+          return [
+          yes('Eric and Split charges checked off as paid', paid === 'ch_eric,ch_split', 'paid: ' + (paid || 'none')),
+          money('Filed as covered for the joint', 54.20, row.extra),
+          money('Still owed on cards (only the held Wegmans)', 25, m.owedNet),
+          money('This pay period', 401.12, m.newPot), money('Left from last pay period', 325.00, m.oldPot), money('Really yours', 726.12, m.really),
+          says('Checklist shows the card money as sent', 'Sent $675.00 to the joint for the cards, including $54.20 to cover the joint', wrapText())]; } },
+      { t: 'You send $325 to Ally (+ Add, To savings)', run: function () {
+          SCENARIOS[0].ids.sav = typeIn('out', 325, 'savings', '2026-10-26', 'Ally');
+        }, check: function () { var m = mm(); return [
+          money('This pay period', 401.12, m.newPot), money('Left from last pay period', 0, m.oldPot), money('Really yours', 401.12, m.really),
+          says('Checklist shows savings as moved', 'Moved $325.00 to savings', wrapText())]; } },
+      { t: 'Wrap up last pay period', run: function () { A.wrapUp(); }, check: function () {
+          var m = mm(), p = A.S.Periods[0] || {};
+          return [
+          yes('Back to one pot', !m.two), money('Really yours', 401.12, m.really),
+          yes('One pay period filed in History', A.S.Periods.length === 1),
+          money('History: paycheck', 1862.12, p.income), money('History: cards', 620.80, p.cards),
+          money('History: covered for the joint', 54.20, p.joint), money('History: saved', 325, p.saved),
+          money('History: bills', 1406, p.bills), money('History: spending', 76.92, p.spend), pagesDraw()]; } },
+      { t: 'Tuesday: the bank shows the three transfers and $1,892.79 of card money', run: function () {
+          bankLine('bk_bills', '2026-10-27', 'WEB TRANSFER TO CHK 4410', -1406);
+          bankLine('bk_cards', '2026-10-27', 'WEB TRANSFER TO CHK 4410', -675);
+          bankLine('bk_sav', '2026-10-27', 'ALLY BANK TRANSFER', -325);
+          bankLine('bk_cardin', '2026-10-27', 'WEB TRANSFER FROM CHK 4410', 1892.79);
+          setBalance(2318.91);
+        }, check: function () { var m = mm(); return [
+          money('Really yours before answering anything', 401.12, m.really),
+          yes('Each typed-in entry is offered as a match', ['bills', 'cards', 'sav'].every(function (k) { return m.suspended[SCENARIOS[0].ids[k]]; }))]; } },
+      { t: 'Answer: Yes, Yes, Yes, then Card payment money', run: function () {
+          var ids = SCENARIOS[0].ids;
+          A.linkRows('bk_bills', [ids.bills]); A.linkRows('bk_cards', [ids.cards]); A.linkRows('bk_sav', [ids.sav]);
+          A.setKind('bk_cardin', 'cardin');
+        }, check: function () { var m = mm(), p = A.S.Periods[0] || {}; return [
+          yes('Typed-in entries replaced by the bank lines', A.S.Checking.filter(function (r) { return r.manual; }).length === 0),
+          money('Card money still to go out', 1892.79, m.passSit), money('Really yours', 401.12, m.really),
+          money('History unchanged: covered for the joint', 54.20, p.joint), money('History unchanged: saved', 325, p.saved)]; } },
+      { t: 'All week: card payments leave M&T', run: function () {
+          bankLine('bk_amex', '2026-10-28', 'AMEX EPAYMENT ACH PMT', -1300, 'cardout');
+          bankLine('bk_chase', '2026-10-29', 'CHASE CREDIT CRD AUTOPAY', -592.79, 'cardout');
+          setBalance(426.12);
+        }, check: function () { var m = mm(); return [
+          money('Card money still to go out', 0, m.passSit), money('Really yours', 401.12, m.really), pagesDraw()]; } }
+    ]
+  },
+  {
+    title: 'When the joint isn\'t short',
+    about: 'Same week, but the joint has enough. The checklist should ask for your card share only.',
+    data: startingData({ jointIn: 1200 }),
+    steps: [
+      { t: 'Paycheck lands', run: function () { bankLine('ck_pay_new', '2026-10-23', 'KENMORE TOWN OF PAYROLL', 1862.12, 'pay'); setBalance(2862.12); },
+        check: function () { var m = mm(), w = wrapText(); return [
+          money('Joint shortfall', 0, m.jointShort),
+          says('Checklist says send $620.80', 'Send $620.80 to the joint: your card share $620.80.', w),
+          says('…and move $379.20 to savings', 'Move $379.20', w)]; } }
+    ]
+  },
+  {
+    title: 'Odd-cent shortfall',
+    about: 'A $108.41 shortfall splits to $54.21 for you (rounded to the cent).',
+    data: startingData({ jointIn: 999.99 }),
+    steps: [
+      { t: 'Paycheck lands', run: function () { bankLine('ck_pay_new', '2026-10-23', 'KENMORE TOWN OF PAYROLL', 1862.12, 'pay'); setBalance(2862.12); },
+        check: function () { var m = mm(); return [money('Joint shortfall', 108.41, m.jointShort), money('Your half', 54.21, m.jointHalf),
+          says('Checklist says send $675.01', 'Send $675.01 to the joint', wrapText())]; } }
+    ]
+  }
+];
+
+/* ---------------------------------------------------------------- run and show */
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
+function runAll() {
+  var total = 0, failed = 0, html = '';
+  SCENARIOS.forEach(function (sc) {
+    sc.ids = {};
+    A.S = JSON.parse(JSON.stringify(sc.data)); A.prep(); A.undoStack.length = 0;
+    html += '<section><h2>' + esc(sc.title) + '</h2><p>' + esc(sc.about) + '</p>';
+    var broken = false;
+    sc.steps.forEach(function (st, i) {
+      html += '<div class="step"><div class="step-title"><span class="n">' + (i + 1) + '</span>' + esc(st.t) + '</div>';
+      if (broken) { html += '<div class="err">Skipped because an earlier step failed to run.</div></div>'; return; }
+      var checks;
+      try { st.run(); checks = st.check(); }
+      catch (e) { broken = true; total++; failed++; html += '<div class="err">This step crashed: ' + esc(e && (e.stack || e.message) || e) + '</div></div>'; return; }
+      html += '<ul class="checks">' + checks.map(function (c) {
+        total++; if (!c.ok) failed++;
+        return '<li class="' + (c.ok ? 'pass' : 'fail') + '"><span class="mark">' + (c.ok ? '✓' : '✗') + '</span><span>' + esc(c.label) + '</span>' +
+          '<span class="val">' + (c.ok ? esc(c.want) : (c.want ? 'expected ' + esc(c.want) + ', got ' + esc(c.got) : esc(c.got))) + '</span></li>';
+      }).join('') + '</ul></div>';
+    });
+    html += '</section>';
+  });
+  document.getElementById('out').innerHTML = html;
+  var b = document.getElementById('banner');
+  b.className = 'banner ' + (failed ? 'bad' : 'ok');
+  b.innerHTML = failed ? failed + ' of ' + total + ' checks failed<small>Don\'t ship until these pass.</small>'
+                       : 'All ' + total + ' checks passed<small>The money math matches the plan.</small>';
+  document.title = (failed ? '✗ ' : '✓ ') + 'Money-math tests';
+  window.__result = { total: total, failed: failed };
+}
+
+loadApp().then(function (app) { A = app; runAll(); }).catch(function (e) {
+  var b = document.getElementById('banner');
+  b.className = 'banner bad'; b.innerHTML = 'The tests couldn\'t run<small>' + esc(e && e.message || e) + '</small>';
+  window.__result = { total: 0, failed: 1, error: String(e && e.message || e) };
+});
+</script>
+</body>
+</html>
