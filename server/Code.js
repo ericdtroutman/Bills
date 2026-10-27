@@ -33,11 +33,12 @@ var TABLES = {
   Periods:     ['id', 'startDate', 'endDate', 'income', 'cards', 'spend', 'bills', 'saved', 'byType', 'joint'],
   TypeRules:   ['id', 'type'],
   Rules:       ['id', 'kind'],
-  CheckPending: ['id', 'date', 'name', 'amount']
+  CheckPending: ['id', 'date', 'name', 'amount'],
+  JointBank:   ['id', 'date', 'name', 'amount', 'pending']       // copy of the joint checking's recent lines (preview feature)
 };
 var NUMBER_FIELDS = { amount: 1, total: 1, us: 1, budget: 1, order: 1, balance: 1, income: 1, cards: 1, spend: 1, bills: 1, saved: 1,
                       extra: 1, credit: 1, joint: 1 };
-var BOOL_FIELDS = { paid: 1, hold: 1, manual: 1, nolink: 1 };
+var BOOL_FIELDS = { paid: 1, hold: 1, manual: 1, nolink: 1, pending: 1 };
 var TEXT_FIELDS = { id: 1, cardId: 1, fundId: 1, personId: 1, item: 1, name: 1, note: 1, who: 1,
                     payOn: 1, color: 1, date: 1, value: 1, status: 1,
                     url: 1, username: 1, password: 1, bank: 1, bankId: 1, clearedOn: 1, kind: 1, pairId: 1, period: 1, settled: 1, startDate: 1, endDate: 1, byType: 1, type: 1, pot: 1 };
@@ -521,11 +522,43 @@ function syncBank_() {
     appendRows_('Imported', newImported);
     rewriteTable_('Pending', pending);
     rewriteTable_('CheckPending', checkPending);
+    try { mirrorJoint_(data, tz); } catch (e) { console.error('Joint checking copy failed: ' + (e.message || e)); }
     recordErrors_(data, newCharges.length + newChecking.length);
     return { added: newCharges.length + newChecking.length };
   } finally {
     lock.releaseLock();
   }
+}
+
+/*
+ * Joint checking (preview feature): keeps a copy of the joint account's recent lines, posted and pending,
+ * in the JointBank tab. It is rewritten on every sync and nothing in the real app reads it yet; the preview
+ * page uses it to show joint debit-card spending. The joint account is the one named in the jointAccount
+ * setting, or else the unmatched account whose name has both "joint" and "check" in it.
+ */
+function jointAccountKey_() {
+  var set = getSetting_('jointAccount');
+  if (set) return set;
+  var hit = readTable_('BankAccounts').filter(function (r) { return !r.cardId && /joint/i.test(r.name) && /check/i.test(r.name); })[0];
+  return hit ? hit.id : '';
+}
+
+function mirrorJoint_(data, tz) {
+  var jk = jointAccountKey_();
+  if (!jk) return;
+  var rows = [];
+  (data.accounts || []).forEach(function (a) {
+    if (acctKey_(a) !== jk) return;
+    (a.transactions || []).forEach(function (t) {
+      var amt = Math.round(parseFloat(t.amount) * 100) / 100;   // + money in, - money out
+      if (!amt) return;
+      var ms = ((t.transacted_at || t.posted) || 0) * 1000;
+      rows.push({ id: 'jb|' + jk + '|' + t.id, date: Utilities.formatDate(new Date(ms || Date.now()), tz, 'yyyy-MM-dd'),
+                  name: tidyName_(t.payee || t.description || ''), amount: amt, pending: !!t.pending });
+    });
+  });
+  rows.sort(function (x, y) { return x.date < y.date ? 1 : x.date > y.date ? -1 : 0; });
+  rewriteTable_('JointBank', rows);
 }
 
 /** Replaces everything in a tab (below the header) with these rows. */
