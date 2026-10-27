@@ -80,7 +80,8 @@ jobs:
               const list = Array.isArray(d) ? d : (d.deployments || []);
               const lines = list.map(x => "…" + String(x.deploymentId).slice(-6) + " " + (x.versionNumber ? "v" + x.versionNumber : "HEAD (always newest code)") +
                 (x.deploymentId === process.env.DEP ? " ← updated by this deploy" : ""));
-              console.log("::notice title=Web app deployments (" + list.length + ")::" + lines.join(" | "));
+              console.log("::notice title=Web app deployments (" + list.length + ")::" + lines.join(" | ") +
+                " || this deploy targets …" + String(process.env.DEP).slice(-6) + " (" + String(process.env.DEP).length + " chars)");
             ' || true
           fi
           rm -f ~/.clasprc.json
