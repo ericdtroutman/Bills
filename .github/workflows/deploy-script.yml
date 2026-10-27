@@ -60,6 +60,11 @@ jobs:
             exit 1
           fi
           DEP="$(printf '%s' "$DEPLOYMENT_ID" | tr -d '[:space:]')"
+          # The secret may hold the whole web app link (https://script.google.com/macros/s/AKfy.../exec).
+          # clasp needs just the id in the middle, so take it out of the link.
+          case "$DEP" in
+            */s/*) DEP="$(printf '%s' "$DEP" | sed -E 's#^.*/s/([^/?]+).*$#\1#')" ;;
+          esac
           cd server
           echo "Sending the code to Apps Script..."
           if ! clasp push --force; then
@@ -68,21 +73,24 @@ jobs:
           fi
           DESC="$(printf '%s' "${GITHUB_SHA::7} ${COMMIT_MSG:-manual deploy}" | head -n1 | cut -c1-90)"
           echo "Updating the web app..."
+          clasp list-deployments --json > /tmp/before.json 2>/dev/null || echo '[]' > /tmp/before.json
           if ! clasp redeploy "$DEP" --description "$DESC"; then
-            echo "::error::The code uploaded but the web app wasn't updated. Check that DEPLOYMENT_ID is the AKfy... id of the active web app (Deploy > Manage deployments)."
+            echo "::error::The code uploaded but the web app wasn't updated. Check that DEPLOYMENT_ID is the web app link or its AKfy... id (Deploy > Manage deployments)."
             exit 1
           fi
-          # Report every deployment and its version as a notice, so it's visible without logs.
-          # Ids are shortened to their last 6 characters: this repo is public.
-          if clasp list-deployments --json > /tmp/deps.json 2>/dev/null; then
-            DEP="$DEP" node -e '
-              const d = JSON.parse(require("fs").readFileSync("/tmp/deps.json", "utf8"));
-              const list = Array.isArray(d) ? d : (d.deployments || []);
-              const lines = list.map(x => "…" + String(x.deploymentId).slice(-6) + " " + (x.versionNumber ? "v" + x.versionNumber : "HEAD (always newest code)") +
-                (x.deploymentId === process.env.DEP ? " ← updated by this deploy" : ""));
-              console.log("::notice title=Web app deployments (" + list.length + ")::" + lines.join(" | ") +
-                " || this deploy targets …" + String(process.env.DEP).slice(-6) + " (" + String(process.env.DEP).length + " chars)");
-            ' || true
-          fi
+          clasp list-deployments --json > /tmp/after.json 2>/dev/null || echo '[]' > /tmp/after.json
+          # Prove the web app really moved to the new version; a quiet failure here once left it on old code.
+          # Ids are shortened to their last 6 characters in anything printed: this repo is public.
+          DEP="$DEP" node -e '
+            const fs = require("fs"), rd = f => { const d = JSON.parse(fs.readFileSync(f, "utf8")); return Array.isArray(d) ? d : (d.deployments || []); };
+            const before = rd("/tmp/before.json"), after = rd("/tmp/after.json"), id = process.env.DEP;
+            const short = x => "…" + String(x).slice(-6);
+            const b = before.find(x => x.deploymentId === id), a = after.find(x => x.deploymentId === id);
+            console.log("::notice title=Web app deployments (" + after.length + ")::" + after.map(x => short(x.deploymentId) + " " +
+              (x.versionNumber ? "v" + x.versionNumber : "HEAD") + (x.deploymentId === id ? " ← this deploy" : "")).join(" | "));
+            if (!a) { console.log("::error::The deployment " + short(id) + " was not found. Check the DEPLOYMENT_ID secret."); process.exit(1); }
+            if (b && a.versionNumber === b.versionNumber) { console.log("::error::The web app stayed on version " + a.versionNumber + ", so it is still running the old code."); process.exit(1); }
+            console.log("Web app " + short(id) + " now on version " + a.versionNumber + (b ? " (was " + b.versionNumber + ")" : ""));
+          '
           rm -f ~/.clasprc.json
           echo "Deployed."
