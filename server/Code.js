@@ -523,6 +523,8 @@ function syncBank_() {
     rewriteTable_('Pending', pending);
     rewriteTable_('CheckPending', checkPending);
     try { mirrorJoint_(data, tz); } catch (e) { console.error('Joint checking copy failed: ' + (e.message || e)); }
+    // yes/no only (never the passcode): lets Claude confirm Script Properties is set up before updating the web app
+    try { setSetting_('passcodeReady', PASSCODE && PASSCODE !== 'change-me' ? 'yes' : 'no'); } catch (e) {}
     recordErrors_(data, newCharges.length + newChecking.length);
     return { added: newCharges.length + newChecking.length };
   } finally {
