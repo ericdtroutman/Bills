@@ -1,0 +1,61 @@
+# Sends server/ to Google Apps Script and updates the live web app (same link) on every push to main.
+# Needs two repository secrets: CLASPRC_JSON (the sign-in from setup/connect-google.sh) and DEPLOYMENT_ID (the AKfy... id).
+name: Deploy script
+
+on:
+  push:
+    branches: [main]
+    paths: ['server/**', '.github/workflows/deploy-script.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-script
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check setup
+        id: check
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          DEPLOYMENT_ID: ${{ secrets.DEPLOYMENT_ID }}
+        run: |
+          if [ -z "$CLASPRC_JSON" ] || [ -z "$DEPLOYMENT_ID" ] || [ ! -f server/.clasp.json ]; then
+            echo "::notice::Not connected to Apps Script yet (missing secrets or server/.clasp.json). Nothing deployed."
+            echo "ready=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=yes" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Make sure no passcode is written in the code
+        if: steps.check.outputs.ready == 'yes'
+        run: |
+          if grep -nE "^\s*var\s+PASSCODE\s*=\s*['\"]" server/*.gs server/*.js 2>/dev/null; then
+            echo "::error::A passcode is typed into the code. It belongs in Script Properties. Nothing deployed."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.ready == 'yes'
+        with:
+          node-version: 20
+
+      - name: Push and redeploy
+        if: steps.check.outputs.ready == 'yes'
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          DEPLOYMENT_ID: ${{ secrets.DEPLOYMENT_ID }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          npm install -g @google/clasp@3.4.1
+          umask 077
+          printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json
+          cd server
+          clasp push --force
+          DESC="$(printf '%s' "${GITHUB_SHA::7} ${COMMIT_MSG:-manual deploy}" | head -n1 | cut -c1-90)"
+          clasp redeploy "$DEPLOYMENT_ID" --description "$DESC"
+          rm -f ~/.clasprc.json
