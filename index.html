@@ -263,6 +263,7 @@
   .qbtn { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 6px 12px; font-size: 12.5px; font-weight: 700; color: var(--ink2); }
   .qbtn:hover { border-color: var(--accent); color: var(--accent); }
   .qbtn.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .qbtn.muted { color: var(--muted); border-style: dashed; }
   .q-hint { margin-top: 8px; font-size: 13px; font-weight: 600; color: #8F5B00; background: #FFF6D1; border-radius: 10px; padding: 8px 10px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .step { grid-template-columns: 28px 1fr; display: grid; padding-top: 10px; padding-bottom: 10px; }
   .stepdot { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #CBD1DB; display: grid; place-items: center; font-size: 11px; font-weight: 800; color: var(--muted); }
@@ -1039,11 +1040,26 @@ function moneyMath(m) {
   var billsRows = cur.filter(function (r) { return r.kind === 'bills'; });
   var saveRows = cur.filter(function (r) { return r.kind === 'savings'; });
   var payRows = cur.filter(function (r) { return r.amount > 0 && r.kind === 'real'; });
-  var cardLines = S.Charges.filter(function (c) { return !c.hold && !c.settled && (c.who === 'Eric' || c.who === 'Split'); })
-    .map(function (c) {
-      return { id: c.id, name: c.item, date: c.date || '', amount: c.who === 'Split' ? c.amount / 2 : +c.amount, full: +c.amount,
-               split: c.who === 'Split', from: (cardsById[c.cardId] || { name: 'Card' }).name, src: 'card' };
-    });
+  // pending charges you counted in a pay period you already closed: when they post, they aren't counted twice
+  var closedPend = closedPending(), usedPend = {}, alreadyCounted = [];
+  var stillPending = {}; (S.Pending || []).forEach(function (p) { stillPending[p.bankId] = 1; });
+  closedPend.forEach(function (p, i) { if (p.bankId && stillPending[p.bankId]) usedPend[i] = 'waiting'; });
+  var mine = function (c) { return c.who === 'Eric' || c.who === 'Split'; };
+  var toLine = function (c, pending) {
+    return { id: c.id, name: c.item, date: c.date || '', amount: c.who === 'Split' ? c.amount / 2 : +c.amount, full: +c.amount,
+             split: c.who === 'Split', from: (cardsById[c.cardId] || { name: 'Card' }).name, src: 'card', pending: pending };
+  };
+  var cardLines = S.Charges.filter(function (c) {
+      if (c.hold || c.settled || !mine(c)) return false;
+      for (var i = 0; i < closedPend.length; i++) {
+        var p = closedPend[i];
+        if (!usedPend[i] && p.cardId === c.cardId && Math.abs(p.amount - c.amount) < 0.01) { usedPend[i] = 1; alreadyCounted.push(c.id); return false; }
+      }
+      return true;
+    }).map(function (c) { return toLine(c, false); })
+    .concat((S.Pending || []).filter(function (c) {
+      return mine(c) && !closedPend.some(function (p) { return p.bankId && p.bankId === c.bankId; });
+    }).map(function (c) { return toLine(c, true); }));
   var owed = sum(cardLines, function (l) { return l.amount; });
   var cardsDone = abs(cardRows), billsDone = abs(billsRows), saved = abs(saveRows), spent = abs(spendRows);
   var billsAmt = r2(m.paycheck);
@@ -1057,7 +1073,7 @@ function moneyMath(m) {
   var lines = owed + spent + (billsRows.length ? billsDone : reserve) + saved + cardExtra;
   return {
     bal: bal, passSit: passSit, unDep: unDep, unOut: unOut, unDepAmt: unDepAmt, cur: cur, spendRows: spendRows, cardRows: cardRows,
-    billsRows: billsRows, saveRows: saveRows, payRows: payRows, cardLines: cardLines, owed: owed, cardsDone: cardsDone,
+    billsRows: billsRows, saveRows: saveRows, payRows: payRows, cardLines: cardLines, alreadyCounted: alreadyCounted, usedPend: usedPend, closedPend: closedPend, owed: owed, cardsDone: cardsDone,
     billsDone: billsDone, saved: saved, spent: spent, billsAmt: billsAmt, reserve: reserve, cardLeft: cardLeft, cardExtra: cardExtra,
     really: really, top: really + lines
   };
@@ -1111,8 +1127,8 @@ function trendBars(mm) {
 }
 
 function kindSelect(r) {
-  var opts = r.amount > 0 ? [['', 'Real or passing?'], ['real', 'Real money'], ['pass', 'Passing through']]
-    : [['spend', 'Spending'], ['cards', 'Card transfer'], ['bills', 'Bills transfer'], ['savings', 'To savings'], ['pass', 'Passing through']];
+  var opts = r.amount > 0 ? [['', 'Real or passing?'], ['real', 'Real money'], ['pass', 'Passing through'], ['ignore', 'Already handled']]
+    : [['spend', 'Spending'], ['cards', 'Card transfer'], ['bills', 'Bills transfer'], ['savings', 'To savings'], ['pass', 'Passing through'], ['ignore', 'Already handled']];
   return '<select class="mini-sel" data-t="Checking" data-id="' + esc(r.id) + '" data-f="kind" title="What is this?">' +
     opts.map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === (r.kind || '') ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>';
 }
@@ -1132,7 +1148,8 @@ function questionsHtml(mm) {
     var amt = Math.abs(r.amount), btns = '', hint = '';
     if (r.amount > 0) {
       btns = '<button class="qbtn" data-act="ckkind" data-id="' + esc(r.id) + '" data-k="real">Real money</button>' +
-             '<button class="qbtn" data-act="ckkind" data-id="' + esc(r.id) + '" data-k="pass">Passing through</button>';
+             '<button class="qbtn" data-act="ckkind" data-id="' + esc(r.id) + '" data-k="pass">Passing through</button>' +
+             '<button class="qbtn muted" data-act="ckkind" data-id="' + esc(r.id) + '" data-k="ignore" title="Already happened before this pay period. Leave it out.">Already handled</button>';
     } else {
       var mate = passIn.filter(function (p) { return Math.abs(p.amount - amt) <= 5; })[0];
       var isBills = !mm.billsRows.length && Math.abs(amt - mm.billsAmt) <= 5;
@@ -1141,9 +1158,12 @@ function questionsHtml(mm) {
         '<button class="qbtn on" data-act="ckpair" data-id="' + esc(r.id) + '" data-with="' + esc(mate.id) + '">Yes, they go together</button></div>';
       else if (isBills) hint = '<div class="q-hint">Is this the bills transfer (' + money(mm.billsAmt) + ')? <button class="qbtn on" data-act="ckkind" data-id="' + esc(r.id) + '" data-k="bills">Yes</button></div>';
       else if (isCards) hint = '<div class="q-hint">Is this the card transfer (' + money(mm.cardLeft) + ')? <button class="qbtn on" data-act="ckkind" data-id="' + esc(r.id) + '" data-k="cards">Yes</button></div>';
+      else if (mm.passSit > 0.009 && amt <= mm.passSit + 5 && /payment|amex|american express|chase|card|synchrony|td bank|citi|capital one|discover|barclay|apple|epay/i.test(r.name))
+        hint = '<div class="q-hint">Part of the passing-through money (' + money(mm.passSit) + ') going back out? <button class="qbtn on" data-act="ckkind" data-id="' + esc(r.id) + '" data-k="pass">Yes</button></div>';
       else if (Math.abs(mm.really) <= 5 || /ally|sav/i.test(r.name)) hint = '<div class="q-hint">Is this the leftover going to savings? <button class="qbtn on" data-act="ckkind" data-id="' + esc(r.id) + '" data-k="savings">Yes</button></div>';
-      btns = [['spend', 'Spending'], ['cards', 'Card transfer'], ['bills', 'Bills transfer'], ['savings', 'To savings'], ['pass', 'Passing through']].map(function (o) {
-        return '<button class="qbtn" data-act="ckkind" data-id="' + esc(r.id) + '" data-k="' + o[0] + '">' + o[1] + '</button>';
+      btns = [['spend', 'Spending'], ['cards', 'Card transfer'], ['bills', 'Bills transfer'], ['savings', 'To savings'], ['pass', 'Passing through'], ['ignore', 'Already handled']].map(function (o) {
+        return '<button class="qbtn' + (o[0] === 'ignore' ? ' muted' : '') + '" data-act="ckkind" data-id="' + esc(r.id) + '" data-k="' + o[0] + '"' +
+          (o[0] === 'ignore' ? ' title="Already happened before this pay period. Leave it out."' : '') + '>' + o[1] + '</button>';
       }).join('');
     }
     h += '<div class="row q-row"><div><b>' + esc(r.name) + '</b> <span class="num ' + (r.amount > 0 ? 'pos-txt' : '') + '">' + (r.amount > 0 ? '+' : '−') + money(amt) + '</span>' +
@@ -1174,7 +1194,7 @@ function viewMoney(m) {
 
   // ---- the Fudget-style list
   var lines = [];
-  mm.cardLines.forEach(function (l) { lines.push({ name: l.name, date: l.date, amount: l.amount, sub: l.from + (l.split ? ' · your half of ' + money(l.full) : ''), type: true }); });
+  mm.cardLines.forEach(function (l) { lines.push({ name: l.name, date: l.date, amount: l.amount, sub: (l.pending ? 'Pending · ' : '') + l.from + (l.split ? ' · your half of ' + money(l.full) : ''), type: true }); });
   mm.spendRows.forEach(function (r) { lines.push({ name: r.name, date: r.date, amount: Math.abs(r.amount), sub: 'M&T checking' + (r.kind ? '' : ' · not answered yet'), type: true, ck: r }); });
   if (mm.billsRows.length) mm.billsRows.forEach(function (r) { lines.push({ name: 'Bills', date: r.date, amount: Math.abs(r.amount), sub: 'Sent to the joint · ' + esc(r.name), ck: r, fixed: 'Bills' }); });
   else if (mm.reserve) lines.push({ name: 'Bills', date: '9999', amount: mm.reserve, sub: 'From Monthly Bills · set aside, not sent yet', fixed: 'Bills', reserve: true });
@@ -1193,10 +1213,10 @@ function viewMoney(m) {
       (l.ck ? kindSelect(l.ck) : '') + '</div></div>';
   }).join('') + '</div>';
   h += '<div class="fline total"><div><b>Balance</b><div class="sub2">What’s really yours right now</div></div><div class="num big2 ' + (mm.really < 0 ? 'neg-txt' : 'pos-txt') + '">' + (mm.really < 0 ? '− ' : '+ ') + money(Math.abs(mm.really)) + '</div><div></div></div>';
-  var deps = mm.cur.filter(function (r) { return r.amount > 0 || r.kind === 'pass' || r.kind === 'cards'; });
+  var deps = mm.cur.filter(function (r) { return r.amount > 0 || r.kind === 'pass' || r.kind === 'cards' || r.kind === 'ignore'; });
   h += '<div class="pfoot"><button class="link" data-act="mmdeps">' + (mmShowDeposits ? 'Hide' : 'Show') + ' money in, transfers and passing-through (' + deps.length + ')</button></div>';
   if (mmShowDeposits) h += '<div class="rows">' + (deps.length ? deps.sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); }).map(function (r) {
-    return '<div class="fline"><div><div>' + esc(r.name) + (r.pairId ? ' <span class="pchip">matched pair</span>' : '') + '</div><div class="sub2">' + shortDate(r.date) + ' · M&amp;T checking</div></div>' +
+    return '<div class="fline"><div><div>' + esc(r.name) + (r.pairId ? ' <span class="pchip">matched pair</span>' : '') + (r.kind === 'ignore' ? ' <span class="pchip">already handled</span>' : '') + '</div><div class="sub2">' + shortDate(r.date) + ' · M&amp;T checking</div></div>' +
       '<div class="num ' + (r.amount > 0 ? 'pos-txt' : '') + '">' + (r.amount > 0 ? '+ ' : '− ') + money(Math.abs(r.amount)) + '</div><div class="fl-tools">' + kindSelect(r) + '</div></div>';
   }).join('') : '<div class="empty">Nothing this period.</div>') + '</div>';
   h += '</section>';
@@ -1234,6 +1254,9 @@ function viewMoney(m) {
   return h;
 }
 
+function closedPending() { try { return JSON.parse(setting('closedPending', '') || '[]'); } catch (e) { return []; } }
+function daysAgo(n) { var x = new Date(); x.setDate(x.getDate() - n); return x.getFullYear() + '-' + ('0' + (x.getMonth() + 1)).slice(-2) + '-' + ('0' + x.getDate()).slice(-2); }
+
 function closePeriod() {
   var mm = moneyMath(calc()), pid = uid('pp'), d = today();
   undoLabel = 'closing the pay period';
@@ -1241,7 +1264,13 @@ function closePeriod() {
   upsert('Periods', { id: pid, startDate: setting('periodStart', '') || setting('syncStart', ''), endDate: d, income: r2(mm.top), cards: r2(mm.owed + mm.cardExtra),
                       spend: r2(mm.spent), bills: r2(mm.billsRows.length ? mm.billsDone : mm.reserve), saved: r2(mm.saved), byType: JSON.stringify(t) });
   mm.cur.forEach(function (r) { upsert('Checking', { id: r.id, period: pid }); });
-  mm.cardLines.forEach(function (l) { upsert('Charges', { id: l.id, settled: pid }); });
+  mm.cardLines.forEach(function (l) { if (!l.pending) upsert('Charges', { id: l.id, settled: pid }); });
+  mm.alreadyCounted.forEach(function (id) { upsert('Charges', { id: id, settled: pid }); });
+  // remember the pending ones counted here, so they aren't counted again once they post
+  var keep = mm.closedPend.filter(function (p, i) { return mm.usedPend[i] !== 1 && p.on >= daysAgo(45); });
+  mm.cardLines.forEach(function (l) { if (l.pending) { var c = find('Pending', l.id); keep.push({ cardId: c.cardId, amount: +c.amount, bankId: c.bankId || '', on: d }); } });
+  if (!find('Settings', 'closedPending')) S.Settings.push({ id: 'closedPending', value: '' });
+  upsert('Settings', { id: 'closedPending', value: JSON.stringify(keep) });
   if (!find('Settings', 'periodStart')) S.Settings.push({ id: 'periodStart', value: '' });
   upsert('Settings', { id: 'periodStart', value: d });
   render();
