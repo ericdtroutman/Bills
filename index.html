@@ -264,6 +264,29 @@
   .qbtn:hover { border-color: var(--accent); color: var(--accent); }
   .qbtn.on { background: var(--ink); color: #fff; border-color: var(--ink); }
   .qbtn.muted { color: var(--muted); border-style: dashed; }
+  .q-hint.link-hint { background: #E7F0FF; color: #1C4FB8; }
+  .nextbox { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 3px 9px; font-size: 11.5px; font-weight: 700; color: var(--muted); }
+  .nextbox:hover { border-color: var(--accent); color: var(--accent); }
+  .nextbox.on { background: #868E96; border-color: #868E96; color: #fff; }
+  .fline.held > div:first-child, .fline.held .num { color: var(--muted); }
+  .pchip.wait { background: #E7F0FF; color: #1C4FB8; }
+  .pchip.wait.late { background: #FFE8CC; color: #C2410C; }
+  .mm-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  .mm-head .btn { white-space: nowrap; flex-shrink: 0; }
+  .mm-pots .fline { grid-template-columns: 1fr 104px; }
+  .mm-pots .fl-tools { grid-column: 1 / -1; justify-content: flex-start; }
+  .step.info .stepdot { border-style: dashed; font-style: italic; }
+  .step.info > div { color: var(--ink2); font-size: 13px; }
+  .notice.nudge { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; background: #FFF6D1; color: #8F5B00; border-radius: 12px; padding: 10px 14px; margin: 0 0 14px; }
+  .addform label { display: block; font-size: 12.5px; font-weight: 700; color: var(--ink2); margin: 0 0 4px; }
+  .addform select { width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; font: inherit; background: #fff; }
+  .addform label.chk { display: flex; gap: 8px; align-items: center; font-weight: 600; margin-bottom: 4px; }
+  .addform label.chk input { width: auto; margin: 0; }
+  .seg { display: flex; gap: 6px; margin-bottom: 12px; }
+  .seg button { flex: 1; border: 1px solid var(--line); background: #fff; border-radius: 10px; padding: 8px; font-weight: 700; color: var(--ink2); }
+  .seg button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .pick { display: grid; gap: 8px; margin-bottom: 8px; }
+  .pick .btn { text-align: left; }
   .q-hint { margin-top: 8px; font-size: 13px; font-weight: 600; color: #8F5B00; background: #FFF6D1; border-radius: 10px; padding: 8px 10px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .step { grid-template-columns: 28px 1fr; display: grid; padding-top: 10px; padding-bottom: 10px; }
   .stepdot { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #CBD1DB; display: grid; place-items: center; font-size: 11px; font-weight: 800; color: var(--muted); }
@@ -672,6 +695,7 @@ function viewCards(m) {
       (m.pend.n ? '+ ' + money(m.pend.all) + ' pending' : 'Every charge has a person')), warn: !!m.needN }) +
     '</div>';
 
+  h += sinceNudge(m);
   h += '<div class="pills">';
   cards.forEach(function (c) {
     var t = sum(S.Charges.filter(function (x) { return x.cardId === c.id && !x.hold; }), function (x) { return x.amount; });
@@ -721,7 +745,8 @@ function viewCards(m) {
     h += '<div class="pend-head"><b>Pending at the bank · ' + money(sum(pend, function (x) { return x.amount; })) + '</b>' +
       '<span>Not in the totals yet. Label them to see what’s coming. When one posts it moves up into the charges.</span></div><div class="rows pend">';
     pend.forEach(function (x) {
-      h += '<div class="row g-charge" data-charge="' + esc(x.id) + '"><div></div><div><div class="item" style="padding:7px 0">' + esc(x.item) + '<span class="pchip">pending</span></div>' +
+      h += '<div class="row g-charge' + (x.hold ? ' held' : '') + '" data-charge="' + esc(x.id) + '"><button class="holdbox' + (x.hold ? ' on' : '') + '" data-act="hold" data-t="Pending" data-id="' + esc(x.id) + '" title="' +
+        (x.hold ? 'On hold. Click to count it again' : 'Put on hold (counts toward the next pay period)') + '"></button><div><div class="item" style="padding:7px 0">' + esc(x.item) + '<span class="pchip">pending</span>' + (x.hold ? ' <span class="hchip">on hold</span>' : '') + '</div>' +
         (x.date ? '<div class="sub2">' + shortDate(x.date) + '</div>' : '') + '</div>' +
         '<div class="r num' + (x.amount < 0 ? ' neg-txt' : '') + '">' + money(x.amount) + '</div>' + whoSelect(x, 'Pending') + '<div></div></div>';
     });
@@ -749,6 +774,19 @@ function viewCards(m) {
     '<button class="btn" data-act="clearcard" data-id="' + card.id + '"' + (liveItems.length ? '' : ' disabled') + '>Clear charges</button>' +
     '</div><button class="link danger" data-act="delcard" data-id="' + card.id + '">Delete this card</button></div></section>';
   return h;
+}
+
+/* after payday and before the card money is sent: offer to hold the new charges for next time */
+function sinceNudge(m) {
+  if (!checkingAccounts().length) return '';
+  var mm; try { mm = moneyMath(m); } catch (e) { return ''; }
+  if (!mm.two || mm.lastT) return '';
+  var cut = mm.cut, ids = [];
+  S.Charges.forEach(function (c) { if (!c.hold && !c.settled && c.date && c.date >= cut) ids.push('Charges:' + c.id); });
+  (S.Pending || []).forEach(function (p) { if (!p.hold && p.date && p.date >= cut) ids.push('Pending:' + p.id); });
+  if (!ids.length) return '';
+  return '<div class="notice nudge"><span><b>' + ids.length + ' card charge' + (ids.length === 1 ? '' : 's') + ' since payday (' + shortDate(cut) + ').</b> Hold ' + (ids.length === 1 ? 'it' : 'them') +
+    ' for next time so ' + (ids.length === 1 ? 'it isn’t' : 'they aren’t') + ' paid with this card transfer?</span><button class="btn small primary" data-act="holdnew" data-ids="' + esc(ids.join(',')) + '">Hold ' + (ids.length === 1 ? 'it' : 'them') + '</button></div>';
 }
 
 function viewJoint(m) {
@@ -1002,9 +1040,10 @@ document.addEventListener('input', function (e) {
 });
 
 /* ======================================================================= My Money (your own M&T checking) */
-var TYPES = ['Gas', 'Groceries', 'Eating out', 'Shopping', 'Subscriptions', 'Bills', 'Other'];
+var TYPES = ['Gas', 'Groceries', 'Eating out', 'Shopping', 'Subscriptions', 'Bills', 'Covered for joint', 'Other'];
 var TYPE_COLOR = { 'Gas': '#F76707', 'Groceries': '#37B24D', 'Eating out': '#E64980', 'Shopping': '#4C6EF5',
-                   'Subscriptions': '#845EF7', 'Bills': '#1098AD', 'Other': '#ADB5BD' };
+                   'Subscriptions': '#845EF7', 'Bills': '#1098AD', 'Covered for joint': '#E8590C', 'Other': '#ADB5BD',
+                   'Pay': '#2B8A3E', 'Money in': '#2B8A3E', 'Savings': '#37B24D', 'Cards': '#868E96' };
 var TYPE_WORDS = [
   ['Gas', /shell|sunoco|exxon|mobil|\bbp\b|speedway|citgo|valero|stewart|fastrac|kwik|gulf|\bgas\b|fuel/i],
   ['Groceries', /wegmans|aldi|\btops\b|price chopper|trader joe|walmart|\bbj'?s\b|costco|grocer|market|hannaford|kroger|save a lot|wholesale/i],
@@ -1026,67 +1065,235 @@ function typeOf(name) {
 }
 function checkingAccounts() { return (S.BankAccounts || []).filter(function (a) { return a.cardId === 'checking'; }); }
 
+var KIND_LABEL = { pay: 'Paycheck', real: 'Other money (yours)', cardin: 'Card payment money', pass: 'Passing through', ignore: 'Already handled',
+  spend: 'Spending', cards: 'Card transfer', extra: 'Extra to cover the joint', bills: 'Bills transfer', savings: 'To savings', cardout: 'Card payment' };
+var IN_KINDS = ['pay', 'real', 'cardin', 'pass', 'ignore'];
+var OUT_KINDS = ['spend', 'cards', 'extra', 'bills', 'savings', 'cardout', 'pass', 'ignore'];
+var PASS_KINDS = { pass: 1, cardin: 1, cardout: 1 };
+var KIND_HELP = { ignore: 'Already happened before this pay period. Leave it out.', cardin: 'The joint sending back the money to pay the cards',
+  cardout: 'A card payment leaving checking, paid with the card payment money', extra: 'Extra you sent because the joint ran short',
+  pass: 'Venmo, Zelle or anything else you just move along' };
+var GENERIC_NAME = /transfer|xfer|zelle|venmo|cash app|paypal|deposit|withdraw|\bcheck\b|\batm\b|online|mobile|web /i;
+var CARDISH = /payment|epay|e-pay|autopay|amex|american express|chase|card|synchrony|citi|capital one|discover|barclay|crd|pmt/i;
+
+function isPay(r) { return r.amount > 0 && (r.kind === 'pay' || (r.kind === 'real' && /payroll|salary|direct dep/i.test(r.name || ''))); }
+function addDays(d, n) { var x = new Date(d + 'T12:00:00'); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); }
+function daysAgo(n) { return addDays(today(), -n); }
+function setSetting(id, value) { if (!find('Settings', id)) S.Settings.push({ id: id, value: '' }); upsert('Settings', { id: id, value: value }); }
+function ruleKey(name) { return String(name || '').toLowerCase().replace(/\d+/g, ' ').replace(/[^a-z&' ]+/g, ' ').replace(/\s+/g, ' ').trim(); }
+
+/* Card charges that left the Charges/Pending tabs but still matter here: pending ones already paid for by a card
+   transfer (so they aren't counted again when they post), and charges cleared on the Cards page before the money was sent. */
+function ledger() {
+  var raw = setting('cardLedger', null);
+  if (raw !== null) { try { return JSON.parse(raw || '[]'); } catch (e) { return []; } }
+  var old = []; try { old = JSON.parse(setting('closedPending', '') || '[]'); } catch (e) {}
+  return old.map(function (p, i) { return { id: 'lg_old' + i, src: 'pending', cardId: p.cardId, bankId: p.bankId || '', full: +p.amount, mine: +p.amount, item: '', date: p.on || '', cover: '', pid: 'old', on: p.on || '' }; });
+}
+function saveLedger(list) { setSetting('cardLedger', JSON.stringify(list)); }
+
+/* Where a line of your checking counts: 'cur' (one pay period), 'next' (held for the next one), or during the
+   overlap 'old' (the pay period you're wrapping up) and 'new' (the one your newest paycheck started). */
 function moneyMath(m) {
-  var C = S.Checking || [];
-  var cur = C.filter(function (r) { return !r.period; });
-  var abs = function (list) { return sum(list, function (r) { return Math.abs(r.amount); }); };
+  var C = S.Checking || [], led = ledger(), billsAmt = r2(m.paycheck);
   var cardsById = {}; S.Cards.forEach(function (c) { cardsById[c.id] = c; });
-  // money that is only passing through (pairs that were matched up are left out)
-  var passSit = sum(C.filter(function (r) { return r.kind === 'pass' && !r.pairId; }), function (r) { return r.amount; });
-  var unDep = C.filter(function (r) { return r.amount > 0 && !r.kind; });
-  var unOut = C.filter(function (r) { return r.amount < 0 && !r.kind; });
-  var spendRows = cur.filter(function (r) { return r.amount < 0 && (r.kind === 'spend' || !r.kind); });
-  var cardRows = cur.filter(function (r) { return r.kind === 'cards'; });
-  var billsRows = cur.filter(function (r) { return r.kind === 'bills'; });
-  var saveRows = cur.filter(function (r) { return r.kind === 'savings'; });
-  var payRows = cur.filter(function (r) { return r.amount > 0 && r.kind === 'real'; });
-  // pending charges you counted in a pay period you already closed: when they post, they aren't counted twice
-  var closedPend = closedPending(), usedPend = {}, alreadyCounted = [];
-  var stillPending = {}; (S.Pending || []).forEach(function (p) { stillPending[p.bankId] = 1; });
-  closedPend.forEach(function (p, i) { if (p.bankId && stillPending[p.bankId]) usedPend[i] = 'waiting'; });
-  var mine = function (c) { return c.who === 'Eric' || c.who === 'Split'; };
-  var toLine = function (c, pending) {
-    return { id: c.id, name: c.item, date: c.date || '', amount: c.who === 'Split' ? c.amount / 2 : +c.amount, full: +c.amount,
-             split: c.who === 'Split', from: (cardsById[c.cardId] || { name: 'Card' }).name, src: 'card', pending: pending };
-  };
-  var cardLines = S.Charges.filter(function (c) {
-      if (c.hold || c.settled || !mine(c)) return false;
-      for (var i = 0; i < closedPend.length; i++) {
-        var p = closedPend[i];
-        if (!usedPend[i] && p.cardId === c.cardId && Math.abs(p.amount - c.amount) < 0.01) { usedPend[i] = 1; alreadyCounted.push(c.id); return false; }
-      }
-      return true;
-    }).map(function (c) { return toLine(c, false); })
-    .concat((S.Pending || []).filter(function (c) {
-      return mine(c) && !closedPend.some(function (p) { return p.bankId && p.bankId === c.bankId; });
-    }).map(function (c) { return toLine(c, true); }));
-  var owed = sum(cardLines, function (l) { return l.amount; });
-  var cardsDone = abs(cardRows), billsDone = abs(billsRows), saved = abs(saveRows), spent = abs(spendRows);
-  var billsAmt = r2(m.paycheck);
-  // the bills amount is set aside once this period's paycheck is in, until the bills transfer shows up
-  var reserve = billsRows.length || !payRows.length ? 0 : billsAmt;
+  var bank = C.filter(function (r) { return !r.manual; }), manual = C.filter(function (r) { return r.manual; });
   var bal = sum(checkingAccounts(), function (a) { return a.balance; });
+
+  // ---- typed-in entries waiting for the bank, and the bank lines that look like them
+  var candidates = function (mr) {
+    return bank.filter(function (b) {
+      return !b.kind && !b.nolink && (b.amount > 0) === (mr.amount > 0) && Math.abs(Math.abs(b.amount) - Math.abs(mr.amount)) <= 1.005 &&
+        b.date >= addDays(mr.date, -3) && b.date <= addDays(mr.date, 7);
+    });
+  };
+  var pairFor = function (b) {        // two typed-in entries sent as one transfer
+    var ms = manual.filter(function (mr) { return (mr.amount > 0) === (b.amount > 0) && b.date >= addDays(mr.date, -3) && b.date <= addDays(mr.date, 7); });
+    for (var i = 0; i < ms.length; i++) for (var j = i + 1; j < ms.length; j++) {
+      var a = ms[i], c = ms[j], okKinds = a.kind === c.kind || (/^(cards|extra)$/.test(a.kind) && /^(cards|extra)$/.test(c.kind));
+      if (okKinds && Math.abs(Math.abs(a.amount) + Math.abs(c.amount) - Math.abs(b.amount)) <= 1.005) return [a, c];
+    }
+    return null;
+  };
+  // while a bank line looks like something you typed in, the typed one stops counting (the bank balance already has it)
+  // and the bank line stays out of the pots (the typed one already shows there)
+  var suspended = {}, linkPending = {};
+  manual.forEach(function (mr) { var cs = candidates(mr); if (cs.length) { suspended[mr.id] = true; cs.forEach(function (b) { linkPending[b.id] = true; }); } });
+  bank.forEach(function (b) { if (!b.kind && !b.nolink) { var pr = pairFor(b); if (pr) { suspended[pr[0].id] = true; suspended[pr[1].id] = true; linkPending[b.id] = true; } } });
+  var cp = S.CheckPending || [];
+  var waiting = manual.map(function (mr) {
+    return { row: mr, suspended: !!suspended[mr.id], late: mr.date <= daysAgo(5),
+             atBank: cp.some(function (p) { return (p.amount > 0) === (mr.amount > 0) && Math.abs(Math.abs(p.amount) - Math.abs(mr.amount)) <= 1.005; }) };
+  });
+  var waitAmt = sum(manual.filter(function (mr) { return !PASS_KINDS[mr.kind] && mr.kind !== 'ignore' && !suspended[mr.id]; }), function (mr) { return mr.amount; });
+  var waitOut = sum(manual.filter(function (mr) { return mr.amount < 0; }), function (mr) { return -mr.amount; });
+
+  var passSit = sum(bank.filter(function (r) { return PASS_KINDS[r.kind] && !r.pairId; }), function (r) { return r.amount; });
+  var unDep = bank.filter(function (r) { return r.amount > 0 && !r.kind; });
+  var unOut = bank.filter(function (r) { return r.amount < 0 && !r.kind; });
   var unDepAmt = sum(unDep, function (r) { return r.amount; });
-  var cardLeft = Math.max(0, owed - cardsDone);            // card money not sent to the joint yet
-  var cardExtra = Math.max(0, cardsDone - owed);           // sent for charges that were already cleared
-  var really = bal - passSit - unDepAmt - cardLeft - reserve;
-  var lines = owed + spent + (billsRows.length ? billsDone : reserve) + saved + cardExtra;
+
+  // ---- which pay period(s) are open
+  var open = C.filter(function (r) { return !r.period && !linkPending[r.id]; });
+  var pays = open.filter(isPay).sort(function (a, b) { return String(a.date).localeCompare(String(b.date)); });
+  var startPay = pays.filter(function (r) { return r.id === setting('periodPay', ''); })[0] || pays[0] || null;
+  var newest = pays.length ? pays[pays.length - 1] : null;
+  var two = !!(newest && startPay && newest !== startPay);
+  var cut = two ? newest.date : '';
+  var potOfRow = function (r) {
+    if (!two) return r.pot === 'next' ? 'next' : 'cur';
+    if (r.pot === 'next') return 'new';
+    if (r.pot === 'last') return 'old';
+    if (r.id === newest.id) return 'new';
+    if (r.kind === 'cards' || r.kind === 'extra' || r.kind === 'savings') return 'old';
+    return String(r.date) >= cut ? 'new' : 'old';
+  };
+  var lastT = '';
+  if (two) open.forEach(function (r) { if (r.kind === 'cards' && potOfRow(r) === 'old' && String(r.date) > lastT) lastT = String(r.date); });
+
+  // ---- your card charges (Eric + half of Split), posted, pending, and remembered
+  var mine = function (c) { return c.who === 'Eric' || c.who === 'Split'; };
+  var share = function (c) { return c.who === 'Split' ? c.amount / 2 : +c.amount; };
+  var livePend = {}; (S.Pending || []).forEach(function (p) { livePend[p.bankId] = true; });
+  var ledByBank = {}; led.forEach(function (e) { if (e.bankId) ledByBank[e.bankId] = e; });
+  var used = {}, dupes = [], dupeOf = {}, lines = [];
+  var cardName = function (id) { return (cardsById[id] || { name: 'Card' }).name; };
+  S.Charges.forEach(function (c) {
+    if (!mine(c)) return;
+    var st = String(c.settled || '');
+    if (st && st.indexOf('ct:') !== 0) return;                      // filed with a past pay period
+    if (!st) {
+      for (var i = 0; i < led.length; i++) {
+        var e = led[i];
+        if (e.src === 'pending' && !used[e.id] && !livePend[e.bankId] && e.cardId === c.cardId && Math.abs(e.full - c.amount) < 0.01) {
+          used[e.id] = true; dupes.push(c.id); dupeOf[c.id] = e.id; return;              // the posted copy of a pending charge already counted
+        }
+      }
+    }
+    lines.push({ id: c.id, src: 'charge', name: c.item, date: c.date || '', amount: share(c), full: +c.amount, split: c.who === 'Split',
+                 from: cardName(c.cardId), cardId: c.cardId, hold: !!c.hold, cover: st ? st.slice(3) : '', pending: false });
+  });
+  (S.Pending || []).forEach(function (p) {
+    if (!mine(p) || ledByBank[p.bankId]) return;
+    lines.push({ id: p.id, src: 'pending', name: p.item, date: p.date || '', amount: share(p), full: +p.amount, split: p.who === 'Split',
+                 from: cardName(p.cardId), cardId: p.cardId, bankId: p.bankId, hold: !!p.hold, cover: '', pending: true });
+  });
+  led.forEach(function (e) {
+    if (e.pid) return;
+    lines.push({ id: e.id, src: 'ledger', name: e.item, date: e.date || '', amount: +e.mine, full: +e.full, split: !!e.split, from: cardName(e.cardId),
+                 cardId: e.cardId, hold: false, cover: e.cover || '', pending: e.src === 'pending' && !!livePend[e.bankId], cleared: e.src === 'cleared' });
+  });
+  var rowById = {}; C.forEach(function (r) { rowById[r.id] = r; });
+  lines.forEach(function (l) {
+    if (l.hold) l.pot = two ? 'new' : 'cur';
+    else if (!two) l.pot = 'cur';
+    else if (l.cover) l.pot = rowById[l.cover] && !rowById[l.cover].period ? potOfRow(rowById[l.cover]) : 'old';
+    else l.pot = lastT && l.date && l.date > lastT ? 'new' : 'old';
+  });
+  var owed = sum(lines.filter(function (l) { return !l.cover; }), function (l) { return l.amount; });
+  var credit = sum(open.filter(function (r) { return r.kind === 'cards'; }), function (r) { return +r.credit || 0; });
+  var owedNet = Math.max(0, owed - credit);
+
+  // ---- the pots
+  var P = {};
+  ['cur', 'next', 'old', 'new'].forEach(function (k) { P[k] = { income: 0, spend: 0, bills: 0, saved: 0, joint: 0, cards: 0, reserve: 0, rows: [], lines: [], hasPay: false, hasBills: false }; });
+  open.forEach(function (r) {
+    if (r.kind === 'ignore' || PASS_KINDS[r.kind] || (r.amount > 0 && !r.kind)) return;
+    var p = P[potOfRow(r)], a = Math.abs(r.amount);
+    r._pot = potOfRow(r);
+    p.rows.push(r);
+    if (r.amount > 0) { p.income += a; if (isPay(r)) p.hasPay = true; }
+    else if (r.kind === 'bills') { p.bills += a; p.hasBills = true; }
+    else if (r.kind === 'savings') p.saved += a;
+    else if (r.kind === 'extra') p.joint += a;
+    else if (r.kind === 'cards') p.joint += +r.extra || 0;
+    else p.spend += a;                                               // spending, or not answered yet
+  });
+  lines.forEach(function (l) { P[l.pot].lines.push(l); P[l.pot].cards += l.amount; });
+  ['cur', 'old', 'new'].forEach(function (k) { if (P[k].hasPay && !P[k].hasBills) P[k].reserve = billsAmt; });
+  var out = function (p) { return p.spend + p.bills + p.reserve + p.saved + p.joint + p.cards; };
+  var reserveAll = P.cur.reserve + P.old.reserve + P.new.reserve;
+  var really = bal - passSit - unDepAmt + waitAmt - owedNet - reserveAll;
+  var newPot = P.new.income - out(P.new);
+  var oldPot = really - newPot;
+  var trayAmt = out(P.next) - P.next.income;
+  if (two) { P.old.total = oldPot; P.new.total = newPot; P.old.start = oldPot + out(P.old) - P.old.income; }
+  else { P.cur.total = really + trayAmt; P.cur.start = P.cur.total + out(P.cur) - P.cur.income; P.next.total = -trayAmt; }
+
   return {
-    bal: bal, passSit: passSit, unDep: unDep, unOut: unOut, unDepAmt: unDepAmt, cur: cur, spendRows: spendRows, cardRows: cardRows,
-    billsRows: billsRows, saveRows: saveRows, payRows: payRows, cardLines: cardLines, alreadyCounted: alreadyCounted, usedPend: usedPend, closedPend: closedPend, owed: owed, cardsDone: cardsDone,
-    billsDone: billsDone, saved: saved, spent: spent, billsAmt: billsAmt, reserve: reserve, cardLeft: cardLeft, cardExtra: cardExtra,
-    really: really, top: really + lines
+    bal: bal, passSit: passSit, unDep: unDep, unOut: unOut, unDepAmt: unDepAmt, open: open, pays: pays, startPay: startPay, newest: newest,
+    two: two, cut: cut, lastT: lastT, potOfRow: potOfRow, lines: lines, dupes: dupes, dupeOf: dupeOf, ledger: led, used: used, owed: owed, owedNet: owedNet, credit: credit,
+    P: P, out: out, really: really, oldPot: oldPot, newPot: newPot, trayAmt: trayAmt, billsAmt: billsAmt, waiting: waiting, waitAmt: waitAmt, waitOut: waitOut,
+    suspended: suspended, linkPending: linkPending, candidates: candidates, pairFor: pairFor, manual: manual, bank: bank, rowById: rowById,
+    jointShort: Math.max(0, -(m.jointLeft - m.pend.joint))
   };
 }
 
-function typeTotals(mm) {
-  var t = {};
-  TYPES.forEach(function (k) { t[k] = 0; });
-  mm.cardLines.forEach(function (l) { t[typeOf(l.name)] += l.amount; });
-  mm.spendRows.forEach(function (r) { t[typeOf(r.name)] += Math.abs(r.amount); });
-  t.Bills += mm.billsRows.length ? mm.billsDone : mm.reserve;
-  if (mm.cardExtra) t.Other += mm.cardExtra;
-  return t;
+/* ---- a card transfer pays off your card charges up to its date; anything over your share covered the joint */
+function coverFor(rowId) {
+  var r = find('Checking', rowId); if (!r) return;
+  var mm = moneyMath(calc()), A = Math.abs(r.amount), T = String(r.date || today()), led = mm.ledger.slice();
+  var elig = mm.lines.filter(function (l) { return !l.cover && !l.hold && (!l.date || l.date <= T); })
+    .sort(function (a, b) { return String(a.date).localeCompare(String(b.date)); });
+  var covered = 0, all = true;
+  elig.forEach(function (l) {
+    if (covered + l.amount > A + 0.005) { all = false; return; }
+    covered += l.amount;
+    if (l.src === 'charge') upsert('Charges', { id: l.id, settled: 'ct:' + rowId });
+    else if (l.src === 'pending') {
+      var p = find('Pending', l.id);
+      led.push({ id: uid('lg'), src: 'pending', cardId: p.cardId, bankId: p.bankId, item: p.item, date: p.date || '', full: +p.amount, mine: l.amount,
+                 split: p.who === 'Split', cover: rowId, pid: '', on: today() });
+    } else led.forEach(function (e) { if (e.id === l.id) e.cover = rowId; });
+  });
+  var rest = r2(A - covered);
+  if (rest < 0.01) rest = 0;
+  upsert('Checking', { id: rowId, extra: all ? rest : 0, credit: all ? 0 : rest });
+  saveLedger(led);
+}
+function uncoverFor(rowId) {
+  S.Charges.filter(function (c) { return c.settled === 'ct:' + rowId; }).forEach(function (c) { upsert('Charges', { id: c.id, settled: '' }); });
+  var led = ledger(), changed = false;
+  led = led.filter(function (e) { if (e.cover === rowId && e.src === 'pending' && !e.pid) { changed = true; return false; } return true; });
+  led.forEach(function (e) { if (e.cover === rowId && !e.pid) { e.cover = ''; changed = true; } });
+  if (changed) saveLedger(led);
+  upsert('Checking', { id: rowId, extra: 0, credit: 0 });
+}
+function setKind(id, k) {
+  var r = find('Checking', id); if (!r) return;
+  if (r.kind === 'cards' && k !== 'cards') uncoverFor(id);
+  upsert('Checking', { id: id, kind: k });
+  if (k === 'cards' && r.kind !== 'cards') coverFor(id);
+}
+/* the bank caught up with something you typed in: the bank line takes your answer, the typed one goes away */
+function linkRows(bankId, manualIds) {
+  var b = find('Checking', bankId), ms = manualIds.map(function (i) { return find('Checking', i); }).filter(Boolean);
+  if (!b || !ms.length) return;
+  var kinds = ms.map(function (x) { return x.kind; });
+  var kind = kinds.indexOf('cards') >= 0 ? 'cards' : kinds[0];
+  var extra = 0, credit = 0;
+  ms.forEach(function (x) { if (x.kind === 'cards') { extra += +x.extra || 0; credit += +x.credit || 0; } else if (kind === 'cards' && x.kind === 'extra') extra += Math.abs(x.amount); });
+  upsert('Checking', { id: bankId, kind: kind, pot: ms[0].pot || '', note: ms.map(function (x) { return x.note; }).filter(Boolean).join(' · '),
+                       period: ms[0].period || '', extra: r2(extra), credit: r2(credit) });
+  var led = ledger(), changed = false;
+  ms.forEach(function (x) {
+    S.Charges.filter(function (c) { return c.settled === 'ct:' + x.id; }).forEach(function (c) { upsert('Charges', { id: c.id, settled: 'ct:' + bankId }); });
+    led.forEach(function (e) { if (e.cover === x.id) { e.cover = bankId; changed = true; } });
+    if (x.period) {     // filed with a pay period already: the bank line goes there too
+      upsert('Checking', { id: bankId, period: x.period });
+    }
+    removeRow('Checking', x.id);
+  });
+  if (changed) saveLedger(led);
+}
+/* remembered answers: "Kenmore Town of Payroll" is always a paycheck */
+function applyRules() {
+  if (!S || !(S.Rules || []).length) return;
+  var rules = {}; S.Rules.forEach(function (r) { rules[r.id] = r.kind; });
+  var todo = (S.Checking || []).filter(function (r) { return !r.manual && !r.kind && rules[ruleKey(r.name)]; });
+  if (!todo.length) return;
+  undoLabel = 'automatic answers';
+  todo.forEach(function (r) { setKind(r.id, rules[ruleKey(r.name)]); });
 }
 
 function donut(t) {
@@ -1109,11 +1316,22 @@ function donut(t) {
     money(total).replace('.00', '') + '</text></svg><div class="pie-legend">' + legend + '</div></div>';
 }
 
+function typeTotals(p) {
+  var t = {};
+  TYPES.forEach(function (k) { t[k] = 0; });
+  p.lines.forEach(function (l) { t[typeOf(l.name)] += l.amount; });
+  p.rows.forEach(function (r) { if (r.amount < 0 && (r.kind === 'spend' || !r.kind)) t[typeOf(r.name)] += Math.abs(r.amount); });
+  t.Bills += p.bills + p.reserve;
+  t['Covered for joint'] += p.joint;
+  return t;
+}
+
 function trendBars(mm) {
   var P = (S.Periods || []).slice().sort(function (a, b) { return String(a.endDate).localeCompare(String(b.endDate)); }).slice(-11);
-  var cols = P.map(function (p) { return { label: shortDate(p.endDate), spent: p.cards + p.spend + p.bills, saved: p.saved }; });
-  cols.push({ label: 'Now', spent: mm.owed + mm.spent + (mm.billsRows.length ? mm.billsDone : mm.reserve) + mm.cardExtra, saved: mm.saved });
-  if (cols.length < 2) return '<div class="empty" style="padding:14px 0">Your trend fills in after your first close-out.</div>';
+  var cols = P.map(function (p) { return { label: shortDate(p.endDate), spent: (+p.cards || 0) + (+p.spend || 0) + (+p.bills || 0) + (+p.joint || 0), saved: +p.saved || 0 }; });
+  var now = mm.two ? mm.P.old : mm.P.cur;
+  cols.push({ label: 'Now', spent: now.cards + now.spend + now.bills + now.reserve + now.joint, saved: now.saved });
+  if (cols.length < 2) return '<div class="empty" style="padding:14px 0">Your trend fills in after your first wrap-up.</div>';
   var max = Math.max.apply(null, cols.map(function (c) { return Math.max(c.spent, c.saved); }).concat([1]));
   var W = 36, gap = 18, H = 120, w = cols.length * (W + gap);
   var bars = cols.map(function (c, i) {
@@ -1126,46 +1344,61 @@ function trendBars(mm) {
     '<div class="lg-row"><span><i style="background:#E64980"></i>Spent</span><span><i style="background:#37B24D"></i>Saved</span></div>';
 }
 
-function kindSelect(r) {
-  var opts = r.amount > 0 ? [['', 'Real or passing?'], ['real', 'Real money'], ['pass', 'Passing through'], ['ignore', 'Already handled']]
-    : [['spend', 'Spending'], ['cards', 'Card transfer'], ['bills', 'Bills transfer'], ['savings', 'To savings'], ['pass', 'Passing through'], ['ignore', 'Already handled']];
-  return '<select class="mini-sel" data-t="Checking" data-id="' + esc(r.id) + '" data-f="kind" title="What is this?">' +
+function kindSelect(r, mm) {
+  var list = r.amount > 0 ? IN_KINDS : OUT_KINDS;
+  var opts = (r.kind ? [] : [['', r.amount > 0 ? 'Not answered yet' : 'Not answered (counts as spending)']]).concat(list.map(function (k) { return [k, KIND_LABEL[k]]; }));
+  if (!r.manual && mm && mm.manual.length) opts.push(['link', 'Link to a typed-in entry…']);
+  if (!r.manual && !r.period && (S.Periods || []).length) opts.push(['lastpp', 'Belongs to last pay period']);
+  return '<select class="mini-sel" data-ck="' + esc(r.id) + '" title="What is this?">' +
     opts.map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === (r.kind || '') ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>';
 }
 function typeSelect(name) {
   var k = storeKey(name), cur = typeOf(name);
   return '<select class="mini-sel type-sel" style="--tc:' + TYPE_COLOR[cur] + '" data-t="TypeRules" data-id="' + esc(k) + '" data-f="type" title="Change the type for every “' + esc(name) + '” charge">' +
-    TYPES.filter(function (t) { return t !== 'Bills'; }).map(function (t) { return '<option' + (t === cur ? ' selected' : '') + '>' + t + '</option>'; }).join('') + '</select>';
+    TYPES.filter(function (t) { return t !== 'Bills' && t !== 'Covered for joint'; }).map(function (t) { return '<option' + (t === cur ? ' selected' : '') + '>' + t + '</option>'; }).join('') + '</select>';
+}
+function qb(id, k, label, cls, title) {
+  return '<button class="qbtn' + (cls ? ' ' + cls : '') + '" data-act="ckkind" data-id="' + esc(id) + '" data-k="' + k + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + label + '</button>';
 }
 
 function questionsHtml(mm) {
   var qs = mm.unDep.concat(mm.unOut).sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
   if (!qs.length) return '';
-  var passIn = (S.Checking || []).filter(function (r) { return r.kind === 'pass' && !r.pairId && r.amount > 0; });
+  var passIn = (S.Checking || []).filter(function (r) { return r.kind === 'pass' && !r.pairId && r.amount > 0 && !r.manual; });
+  var lastP = (S.Periods || []).length;
+  var startDate = mm.two ? '' : (mm.startPay ? mm.startPay.date : '');
+  var oldShare = sum(mm.lines.filter(function (l) { return !l.cover && !l.hold && (!mm.two || l.pot === 'old'); }), function (l) { return l.amount; });
   var h = '<section class="panel q-panel" style="--c:#FCC419"><div class="phead"><div class="grow"><div class="eyebrow">Needs an answer</div>' +
     '<div style="font-size:20px;font-weight:800">' + qs.length + ' from your checking</div></div></div><div class="rows">';
   qs.forEach(function (r) {
-    var amt = Math.abs(r.amount), btns = '', hint = '';
-    if (r.amount > 0) {
-      btns = '<button class="qbtn" data-act="ckkind" data-id="' + esc(r.id) + '" data-k="real">Real money</button>' +
-             '<button class="qbtn" data-act="ckkind" data-id="' + esc(r.id) + '" data-k="pass">Passing through</button>' +
-             '<button class="qbtn muted" data-act="ckkind" data-id="' + esc(r.id) + '" data-k="ignore" title="Already happened before this pay period. Leave it out.">Already handled</button>';
+    var amt = Math.abs(r.amount), btns = '', hint = '', id = r.id;
+    // something you typed in?
+    var ms = r.nolink ? [] : mm.manual.filter(function (x) { return mm.candidates(x).indexOf(r) >= 0; });
+    var pair = !ms.length && !r.nolink ? mm.pairFor(r) : null;
+    if (ms.length || pair) {
+      var withIds = (pair || [ms[0]]).map(function (x) { return x.id; }).join(',');
+      var what = pair ? 'your two entries together (' + pair.map(function (x) { return money(Math.abs(x.amount)) + ' ' + KIND_LABEL[x.kind].toLowerCase(); }).join(' + ') + ')'
+        : 'the <b>' + money(Math.abs(ms[0].amount)) + ' ' + esc(KIND_LABEL[ms[0].kind].toLowerCase()) + '</b> you entered ' + shortDate(ms[0].date);
+      hint = '<div class="q-hint link-hint">Is this ' + what + '? <button class="qbtn on" data-act="cklink" data-id="' + esc(id) + '" data-with="' + esc(withIds) + '">Yes, that’s it</button>' +
+        '<button class="qbtn" data-act="cknolink" data-id="' + esc(id) + '">No, something else</button></div>';
+    } else if (r.amount > 0) {
+      if (/payroll|salary|direct dep/i.test(r.name)) hint = '<div class="q-hint">Your paycheck? ' + qb(id, 'pay', 'Yes', 'on') + '</div>';
     } else {
       var mate = passIn.filter(function (p) { return Math.abs(p.amount - amt) <= 5; })[0];
-      var isBills = !mm.billsRows.length && Math.abs(amt - mm.billsAmt) <= 5;
-      var isCards = mm.owed > 0 && Math.abs(amt - mm.cardLeft) <= 5;
+      var billsPot = mm.two ? mm.P['new'] : mm.P.cur;
+      var withExtra = oldShare + mm.jointShort;
       if (mate) hint = '<div class="q-hint">Goes with ' + esc(mate.name) + ' ' + money(mate.amount) + ' from ' + shortDate(mate.date) + '? ' +
-        '<button class="qbtn on" data-act="ckpair" data-id="' + esc(r.id) + '" data-with="' + esc(mate.id) + '">Yes, they go together</button></div>';
-      else if (isBills) hint = '<div class="q-hint">Is this the bills transfer (' + money(mm.billsAmt) + ')? <button class="qbtn on" data-act="ckkind" data-id="' + esc(r.id) + '" data-k="bills">Yes</button></div>';
-      else if (isCards) hint = '<div class="q-hint">Is this the card transfer (' + money(mm.cardLeft) + ')? <button class="qbtn on" data-act="ckkind" data-id="' + esc(r.id) + '" data-k="cards">Yes</button></div>';
-      else if (mm.passSit > 0.009 && amt <= mm.passSit + 5 && /payment|amex|american express|chase|card|synchrony|td bank|citi|capital one|discover|barclay|apple|epay/i.test(r.name))
-        hint = '<div class="q-hint">Part of the passing-through money (' + money(mm.passSit) + ') going back out? <button class="qbtn on" data-act="ckkind" data-id="' + esc(r.id) + '" data-k="pass">Yes</button></div>';
-      else if (Math.abs(mm.really) <= 5 || /ally|sav/i.test(r.name)) hint = '<div class="q-hint">Is this the leftover going to savings? <button class="qbtn on" data-act="ckkind" data-id="' + esc(r.id) + '" data-k="savings">Yes</button></div>';
-      btns = [['spend', 'Spending'], ['cards', 'Card transfer'], ['bills', 'Bills transfer'], ['savings', 'To savings'], ['pass', 'Passing through'], ['ignore', 'Already handled']].map(function (o) {
-        return '<button class="qbtn' + (o[0] === 'ignore' ? ' muted' : '') + '" data-act="ckkind" data-id="' + esc(r.id) + '" data-k="' + o[0] + '"' +
-          (o[0] === 'ignore' ? ' title="Already happened before this pay period. Leave it out."' : '') + '>' + o[1] + '</button>';
-      }).join('');
+        '<button class="qbtn on" data-act="ckpair" data-id="' + esc(id) + '" data-with="' + esc(mate.id) + '">Yes, they go together</button></div>';
+      else if (!billsPot.hasBills && Math.abs(amt - mm.billsAmt) <= 5) hint = '<div class="q-hint">Is this the bills transfer (' + money(mm.billsAmt) + ')? ' + qb(id, 'bills', 'Yes', 'on') + '</div>';
+      else if (oldShare > 0.5 && (Math.abs(amt - oldShare) <= 5 || Math.abs(amt - withExtra) <= 5 || (amt > oldShare && amt - oldShare <= mm.jointShort + 50)))
+        hint = '<div class="q-hint">Is this the card transfer to the joint (your share ' + money(oldShare) + (amt - oldShare > 0.5 ? ', plus ' + money(amt - oldShare) + ' extra for the joint' : '') + ')? ' + qb(id, 'cards', 'Yes', 'on') + '</div>';
+      else if (mm.passSit > 0.009 && amt <= mm.passSit + 5 && CARDISH.test(r.name))
+        hint = '<div class="q-hint">A card payment, paid from the card money (' + money(mm.passSit) + ' still to go out)? ' + qb(id, 'cardout', 'Yes', 'on') + '</div>';
+      else if (/ally|sav/i.test(r.name)) hint = '<div class="q-hint">Is this the leftover going to savings? ' + qb(id, 'savings', 'Yes', 'on') + '</div>';
     }
+    var kinds = r.amount > 0 ? IN_KINDS : OUT_KINDS;
+    btns = kinds.map(function (k) { return qb(id, k, KIND_LABEL[k], k === 'ignore' ? 'muted' : '', KIND_HELP[k]); }).join('');
+    if (lastP && startDate && r.date < startDate) btns += qb(id, 'lastpp', 'Belongs to last pay period', 'muted', 'Files it with the pay period you already wrapped up');
     h += '<div class="row q-row"><div><b>' + esc(r.name) + '</b> <span class="num ' + (r.amount > 0 ? 'pos-txt' : '') + '">' + (r.amount > 0 ? '+' : '−') + money(amt) + '</span>' +
       '<div class="sub2">' + shortDate(r.date) + ' · M&amp;T checking · ' + (r.amount > 0 ? 'money in' : 'money out') + '</div>' + hint +
       '<div class="q-btns">' + btns + '</div></div></div>';
@@ -1173,108 +1406,267 @@ function questionsHtml(mm) {
   return h + '</div></section>';
 }
 
+/* one line of a pot */
+function moneyLine(l) {
+  var tools = '';
+  if (l.next !== undefined) {
+    var lbl = l.pots === 'old' ? 'Move →' : l.pots === 'new' ? '← Move' : 'Next';
+    var ttl = l.pots === 'old' ? 'Count it in this pay period instead' : l.pots === 'new' ? 'Count it in last pay period instead' :
+      l.next ? 'Counted toward the next pay period. Click to count it in this one.' : 'Count it toward the next pay period instead';
+    tools += '<button class="nextbox' + (l.next && !l.pots ? ' on' : '') + '" data-act="' + l.nextAct + '" data-id="' + esc(l.nextId) + '" data-t="' + (l.nextT || '') + '" title="' + ttl + '">' + lbl + '</button>';
+  }
+  tools += l.fixed ? '<span class="tchip" style="--tc:' + (TYPE_COLOR[l.fixed] || '#868E96') + '">' + esc(l.fixed) + '</span>' : (l.type ? typeSelect(l.name) : '');
+  if (l.ck) tools += kindSelect(l.ck, l.mm);
+  if (l.del) tools += '<button class="x" title="Delete" data-act="delman" data-id="' + esc(l.del) + '">×</button>';
+  var sign = l.amount > 0 ? '+ ' : '− ';
+  return '<div class="fline' + (l.muted ? ' reserve' : '') + (l.next ? ' held' : '') + '"><div><div>' + esc(l.name) + (l.chips || '') + '</div><div class="sub2">' +
+    (l.date && l.date !== '9999' ? shortDate(l.date) + ' · ' : '') + l.sub + '</div></div>' +
+    '<div class="num ' + (l.amount > 0 ? 'pos-txt' : 'neg-out') + '">' + sign + money(Math.abs(l.amount)) + '</div><div class="fl-tools">' + tools + '</div></div>';
+}
+function potLines(mm, key) {
+  var p = mm.P[key], out = [], two = mm.two;
+  var nextOn = key === 'next' || key === 'new';
+  var wait = {}; mm.waiting.forEach(function (w) { wait[w.row.id] = w; });
+  var chipFor = function (r) {
+    if (!r.manual) return '';
+    var w = wait[r.id] || {};
+    if (w.suspended) return ' <span class="pchip wait">The bank shows it. Link it above.</span>';
+    return ' <span class="pchip wait' + (w.late ? ' late' : '') + '">' + (w.late ? 'Not at the bank after 5 days' : 'Waiting for the bank') + '</span>' +
+      (w.atBank ? ' <span class="pchip">M&amp;T shows it pending</span>' : '');
+  };
+  p.rows.forEach(function (r) {
+    var base = { date: r.date, ck: r, mm: mm, del: r.manual ? r.id : '', chips: chipFor(r), next: isPay(r) ? undefined : nextOn, pots: two ? key : '',
+                 nextAct: 'potnext', nextId: r.id };
+    var src = r.manual ? 'Typed in' + (r.note && r.name !== r.note ? '' : '') : 'M&T checking';
+    if (r.amount > 0) out.push(Object.assign(base, { name: r.name, amount: r.amount, sub: (isPay(r) ? 'Paycheck · ' : '') + src, fixed: isPay(r) ? 'Pay' : 'Money in' }));
+    else if (r.kind === 'bills') out.push(Object.assign(base, { name: 'Bills', amount: r.amount, sub: 'To the joint · ' + esc(r.name) + ' · ' + src, fixed: 'Bills' }));
+    else if (r.kind === 'savings') out.push(Object.assign(base, { name: 'To savings', amount: r.amount, sub: esc(r.name) + ' · ' + src, fixed: 'Savings' }));
+    else if (r.kind === 'extra') out.push(Object.assign(base, { name: 'Covered for the joint', amount: r.amount, sub: esc(r.name) + ' · ' + src, fixed: 'Covered for joint' }));
+    else if (r.kind === 'cards') {
+      var covered = mm.lines.filter(function (l) { return l.cover === r.id; });
+      var sub = 'Card transfer ' + money(Math.abs(r.amount)) + ' · paid ' + covered.length + ' card charge' + (covered.length === 1 ? '' : 's') + ' (' + money(sum(covered, function (l) { return l.amount; })) + ')' +
+        (+r.credit ? ' · ' + money(r.credit) + ' toward the rest' : '') + ' · ' + src;
+      out.push(Object.assign(base, { name: +r.extra ? 'Covered for the joint' : 'Card transfer', amount: -(+r.extra || 0), sub: sub, fixed: +r.extra ? 'Covered for joint' : 'Cards', muted: !(+r.extra) }));
+    } else out.push(Object.assign(base, { name: r.name, amount: r.amount, sub: src + (r.kind ? '' : ' · not answered yet'), type: true }));
+  });
+  p.lines.forEach(function (l) {
+    var how = l.cover ? 'paid with the card transfer' : l.cleared ? 'cleared on Cards, not sent yet' : 'not sent yet';
+    out.push({ name: l.name, date: l.date, amount: -l.amount, type: true,
+               sub: (l.pending ? 'Pending · ' : '') + esc(l.from) + (l.split ? ' · your half of ' + money(l.full) : '') + ' · ' + how + (l.hold && !two ? ' · on hold on the Cards page' : ''),
+               next: l.cover || l.src === 'ledger' ? undefined : (two ? nextOn : l.hold), pots: two ? key : '', nextAct: 'hold', nextId: l.id, nextT: l.src === 'pending' ? 'Pending' : 'Charges' });
+  });
+  if (p.reserve) out.push({ name: 'Bills', date: '9999', amount: -p.reserve, sub: 'From Monthly Bills · set aside until the bills transfer shows up', fixed: 'Bills', muted: true });
+  out.sort(function (a, b) { return String(b.date || '').localeCompare(String(a.date || '')); });
+  return out;
+}
+function potPanel(mm, key, title, eyebrow, totalLabel, color) {
+  var p = mm.P[key], lines = potLines(mm, key);
+  var h = '<section class="panel fudget" style="--c:' + color + '"><div class="phead"><div class="grow"><div class="eyebrow">' + eyebrow + '</div>' +
+    '<div style="font-size:20px;font-weight:800">' + title + '</div></div><div class="big num">' + money(p.total) + '</div></div>';
+  if (p.start !== undefined && Math.abs(p.start) > 0.004)
+    h += '<div class="fline top"><div><b>' + (key === 'old' && mm.startPay ? 'Already in checking before ' + shortDate(mm.startPay.date) : key === 'cur' && mm.startPay ? 'Already in checking before ' + shortDate(mm.startPay.date) : 'Already in checking') + '</b><div class="sub2">Carried over. Worked out from your M&amp;T balance.</div></div><div class="num ' + (p.start < 0 ? 'neg-txt' : 'pos-txt') + '">' + (p.start < 0 ? '− ' : '+ ') + money(Math.abs(p.start)) + '</div><div></div></div>';
+  h += '<div class="rows">' + (lines.length ? lines.map(moneyLine).join('') : '<div class="empty">Nothing here yet.</div>') + '</div>';
+  h += '<div class="fline total"><div><b>' + totalLabel + '</b></div><div class="num big2 ' + (p.total < 0 ? 'neg-txt' : 'pos-txt') + '">' + (p.total < 0 ? '− ' : '+ ') + money(Math.abs(p.total)) + '</div><div></div></div></section>';
+  return h;
+}
+
 function viewMoney(m) {
-  var h = '<h1>My Money</h1><p class="sub">Your M&amp;T checking: what you had this pay period, what went out, and what’s really yours.</p>';
+  var h = '<div class="mm-head"><div><h1>My Money</h1><p class="sub">Your M&amp;T checking: what’s really yours, worked out from your balance.</p></div>' +
+    (checkingAccounts().length ? '<button class="btn primary" data-act="mmadd">+ Add</button>' : '') + '</div>';
   if (!checkingAccounts().length) {
     return h + '<section class="panel" style="--c:#2B8A3E"><div class="phead"><div class="grow"><div class="eyebrow">Set up</div>' +
       '<div style="font-size:20px;font-weight:800">Connect your M&amp;T checking</div></div></div><ol class="steps">' +
       '<li>Connect M&amp;T in SimpleFIN (the same place as your cards).</li>' +
       '<li>In this app, open <b>Bank Sync</b> and tap <b>Sync now</b>.</li>' +
-      '<li>Next to your M&amp;T checking account, pick <b>My checking (My Money)</b>. Leave your savings accounts on “Don’t import”.</li>' +
+      '<li>Next to your M&amp;T checking account, pick <b>My M&amp;T checking</b>. Leave your savings accounts on “Don’t import”.</li>' +
       '<li>Come back here. Your checking starts filling in from the date set on Bank Sync.</li></ol>' +
       '<div class="pfoot"><span></span><button class="btn primary" data-act="nav" data-v="bank">Go to Bank Sync</button></div></section>';
   }
-  var mm = moneyMath(m), start = setting('periodStart', '') || setting('syncStart', '');
-  h += '<div class="tiles">' +
-    tile('Really yours', mm.really, { sign: true, hint: 'After cards, bills and passing-through money' }) +
-    tile('M&T says', mm.bal, { hint: 'Balance from the bank' }) +
-    tile('Passing through', mm.passSit, { hint: mm.passSit > 0.009 ? 'Still sitting in checking. Send it on.' : 'Nothing waiting', warn: mm.passSit > 0.009 }) +
-    tile('Owe on the cards', mm.cardLeft, { hint: 'Your charges + half of Split, not sent yet' }) + '</div>';
+  var mm = moneyMath(m);
+  var waitingN = mm.waiting.filter(function (w) { return !w.suspended && !PASS_KINDS[w.row.kind]; }).length;
+  h += '<div class="tiles">' + tile('Really yours', mm.really, { sign: true, hint: 'Your M&T balance minus everything that isn’t free to spend' });
+  if (mm.two) h += tile('Left from last pay period', mm.oldPot, { sign: true, hint: 'Goes to savings when you wrap up' }) +
+    tile('This pay period', mm.newPot, { sign: true, hint: 'Since your ' + shortDate(mm.newest.date) + ' paycheck' });
+  else h += tile('M&T says', mm.bal, { hint: 'Balance from the bank' }) + tile('Owe on the cards', mm.owedNet, { hint: 'Your charges + half of Split, pending too' });
+  if (waitingN) h += tile('Waiting for the bank', mm.waitOut, { hint: waitingN + ' typed-in entr' + (waitingN === 1 ? 'y' : 'ies') });
+  if (Math.abs(mm.passSit) > 0.009) h += '<div class="tile"><div class="lbl">Card money still to go out</div><div class="val num">' + money(mm.passSit) + '</div>' +
+    '<div class="hint warn">Not yours. Card payments take it down.</div>' +
+    (mm.passSit > 0 && mm.passSit <= 20 ? '<button class="link" data-act="keepcard" style="margin-top:4px">Done paying, keep the ' + money(mm.passSit) + '</button>' : '') + '</div>';
+  h += '</div>';
   h += questionsHtml(mm);
 
-  // ---- the Fudget-style list
-  var lines = [];
-  mm.cardLines.forEach(function (l) { lines.push({ name: l.name, date: l.date, amount: l.amount, sub: (l.pending ? 'Pending · ' : '') + l.from + (l.split ? ' · your half of ' + money(l.full) : ''), type: true }); });
-  mm.spendRows.forEach(function (r) { lines.push({ name: r.name, date: r.date, amount: Math.abs(r.amount), sub: 'M&T checking' + (r.kind ? '' : ' · not answered yet'), type: true, ck: r }); });
-  if (mm.billsRows.length) mm.billsRows.forEach(function (r) { lines.push({ name: 'Bills', date: r.date, amount: Math.abs(r.amount), sub: 'Sent to the joint · ' + esc(r.name), ck: r, fixed: 'Bills' }); });
-  else if (mm.reserve) lines.push({ name: 'Bills', date: '9999', amount: mm.reserve, sub: 'From Monthly Bills · set aside, not sent yet', fixed: 'Bills', reserve: true });
-  else lines.push({ name: 'Bills', date: '9999', amount: mm.billsAmt, sub: 'From Monthly Bills · set aside once your paycheck arrives (not counted yet)', fixed: 'Bills', reserve: true, info: true });
-  mm.saveRows.forEach(function (r) { lines.push({ name: 'To savings', date: r.date, amount: Math.abs(r.amount), sub: esc(r.name), ck: r, fixed: 'Savings' }); });
-  if (mm.cardExtra > 0.009) lines.push({ name: 'Card transfer', date: '', amount: mm.cardExtra, sub: 'For card charges already cleared', fixed: 'Cards' });
-  lines.sort(function (a, b) { return String(b.date || '').localeCompare(String(a.date || '')); });
+  if (mm.two) {
+    h += '<div class="cols mm-pots">' +
+      potPanel(mm, 'old', 'Last pay period', 'Wrapping up', 'Left from last pay period', '#868E96') +
+      potPanel(mm, 'new', 'This pay period', 'Since ' + shortDate(mm.newest.date), 'Yours this pay period', '#2B8A3E') + '</div>';
+    h += wrapPanel(mm, m);
+  } else {
+    h += potPanel(mm, 'cur', 'This pay period', mm.startPay ? 'Since ' + shortDate(mm.startPay.date) : 'Waiting for your paycheck', 'Yours this pay period', '#2B8A3E');
+    if (mm.P.next.rows.length || mm.P.next.lines.length) {
+      var nl = potLines(mm, 'next');
+      h += '<section class="panel fudget" style="--c:#ADB5BD;margin-top:16px"><div class="phead"><div class="grow"><div class="eyebrow">Already taken off Really yours</div>' +
+        '<div style="font-size:20px;font-weight:800">Held for next pay period</div></div><div class="big num">' + money(-mm.P.next.total) + '</div></div>' +
+        '<div class="rows">' + nl.map(moneyLine).join('') + '</div></section>';
+    }
+    h += '<p class="sub" style="margin-top:12px">When your next paycheck comes in, this page splits into two: what’s left from this pay period (for savings) and the new one. Wrap up the old one whenever you get to it.</p>';
+  }
 
-  h += '<section class="panel fudget" style="--c:#2B8A3E"><div class="phead"><div class="grow"><div class="eyebrow">This pay period' + (start ? ' · since ' + shortDate(start) : '') + '</div>' +
-    '<div style="font-size:20px;font-weight:800">Me</div></div></div>';
-  h += '<div class="fline top"><div><b>Money I had to work with</b><div class="sub2">M&amp;T balance, plus what went out this period, minus passing-through money</div></div><div class="num pos-txt">+ ' + money(mm.top) + '</div><div></div></div>';
-  h += '<div class="rows">' + lines.map(function (l) {
-    return '<div class="fline' + (l.reserve ? ' reserve' : '') + '"><div><div>' + esc(l.name) + '</div><div class="sub2">' + (l.date && l.date !== '9999' ? shortDate(l.date) + ' · ' : '') + l.sub + '</div></div>' +
-      '<div class="num neg-out"' + (l.info ? ' style="color:#ADB5BD;text-decoration:line-through"' : '') + '>− ' + money(l.amount) + '</div>' +
-      '<div class="fl-tools">' + (l.fixed ? '<span class="tchip" style="--tc:' + (TYPE_COLOR[l.fixed] || '#868E96') + '">' + l.fixed + '</span>' : typeSelect(l.name)) +
-      (l.ck ? kindSelect(l.ck) : '') + '</div></div>';
-  }).join('') + '</div>';
-  h += '<div class="fline total"><div><b>Balance</b><div class="sub2">What’s really yours right now</div></div><div class="num big2 ' + (mm.really < 0 ? 'neg-txt' : 'pos-txt') + '">' + (mm.really < 0 ? '− ' : '+ ') + money(Math.abs(mm.really)) + '</div><div></div></div>';
-  var deps = mm.cur.filter(function (r) { return r.amount > 0 || r.kind === 'pass' || r.kind === 'cards' || r.kind === 'ignore'; });
-  h += '<div class="pfoot"><button class="link" data-act="mmdeps">' + (mmShowDeposits ? 'Hide' : 'Show') + ' money in, transfers and passing-through (' + deps.length + ')</button></div>';
-  if (mmShowDeposits) h += '<div class="rows">' + (deps.length ? deps.sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); }).map(function (r) {
-    return '<div class="fline"><div><div>' + esc(r.name) + (r.pairId ? ' <span class="pchip">matched pair</span>' : '') + (r.kind === 'ignore' ? ' <span class="pchip">already handled</span>' : '') + '</div><div class="sub2">' + shortDate(r.date) + ' · M&amp;T checking</div></div>' +
-      '<div class="num ' + (r.amount > 0 ? 'pos-txt' : '') + '">' + (r.amount > 0 ? '+ ' : '− ') + money(Math.abs(r.amount)) + '</div><div class="fl-tools">' + kindSelect(r) + '</div></div>';
-  }).join('') : '<div class="empty">Nothing this period.</div>') + '</div>';
-  h += '</section>';
+  var showKey = mm.two ? 'old' : 'cur';
+  h += '<div class="cols" style="margin-top:16px"><section class="panel" style="--c:#E64980"><div class="phead"><div class="grow"><div class="eyebrow">' + (mm.two ? 'Last pay period' : 'This pay period') + '</div>' +
+    '<div style="font-size:20px;font-weight:800">Where my money went</div></div></div><div style="padding:0 20px 16px">' + donut(typeTotals(mm.P[showKey])) +
+    '<div class="sub2" style="margin-top:10px">Types are guessed from the store name. Change one with the small menu on any line and that store remembers it.</div></div></section>' +
+    '<section class="panel" style="--c:#37B24D"><div class="phead"><div class="grow"><div class="eyebrow">By pay period</div><div style="font-size:20px;font-weight:800">Spent vs. saved</div></div></div>' +
+    '<div style="padding:0 20px 16px">' + trendBars(mm) + '</div></section></div>';
 
-  // ---- payday checklist
-  var steps = [
-    { ok: mm.payRows.length > 0, text: mm.payRows.length ? 'Paycheck arrived: ' + money(sum(mm.payRows, function (r) { return r.amount; })) : (mm.unDep.length ? 'Answer the deposit above (Real or Passing through)' : 'Waiting for your paycheck') },
-    { ok: mm.owed < 0.01 || mm.cardLeft <= 5, text: mm.cardLeft > 5 ? 'Send ' + money(mm.cardLeft) + ' to the joint for the cards' : 'Cards covered' + (mm.cardsDone ? ': sent ' + money(mm.cardsDone) : '') },
-    { ok: mm.billsRows.length > 0, text: mm.billsRows.length ? 'Bills sent: ' + money(mm.billsDone) : 'Send ' + money(mm.billsAmt) + ' to the joint for bills' },
-    { ok: mm.passSit < 0.01 && mm.passSit > -0.01, text: Math.abs(mm.passSit) < 0.01 ? 'Nothing passing through left' : money(mm.passSit) + ' passing-through money still in checking' },
-    { ok: mm.saved > 0 && mm.really <= 5, text: mm.really > 5 ? 'Move ' + money(mm.really) + ' to savings' : (mm.saved ? 'Moved ' + money(mm.saved) + ' to savings' : 'Nothing left to move to savings') }
-  ];
-  var allOk = steps.every(function (s) { return s.ok; });
-  h += '<div class="cols" style="margin-top:16px"><section class="panel" style="--c:#4C6EF5"><div class="phead"><div class="grow"><div class="eyebrow">1st &amp; 15th</div>' +
-    '<div style="font-size:20px;font-weight:800">Payday checklist</div></div></div><div class="rows">' +
-    steps.map(function (s, i) { return '<div class="row step' + (s.ok ? ' done' : '') + '"><span class="stepdot">' + (s.ok ? '' : i + 1) + '</span><div>' + s.text + '</div></div>'; }).join('') +
-    '</div><div class="pfoot"><span style="font-size:12px;color:var(--muted)">' + (allOk ? 'All set. Close out to start the next pay period.' : 'You can close out anytime. Unfinished steps are just reminders.') + '</span>' +
-    '<button class="btn' + (allOk ? ' primary' : '') + '" data-act="closeperiod">Close out pay period</button></div></section>';
+  // everything else in checking: passing-through money, card money, already handled
+  var other = mm.open.filter(function (r) { return r.kind === 'ignore' || PASS_KINDS[r.kind]; });
+  h += '<div class="pfoot" style="padding:12px 0 0"><button class="link" data-act="mmdeps">' + (mmShowDeposits ? 'Hide' : 'Show') + ' passing-through, card money and already-handled lines (' + other.length + ')</button></div>';
+  if (mmShowDeposits) h += '<section class="panel fudget"><div class="rows">' + (other.length ? other.sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); }).map(function (r) {
+    return moneyLine({ name: r.name, date: r.date, amount: r.amount, sub: (r.manual ? 'Typed in · matched, waiting for your answer' : 'M&amp;T checking') + (r.pairId ? ' · matched pair' : ''), ck: r, mm: mm, del: r.manual ? r.id : '' });
+  }).join('') : '<div class="empty">Nothing here.</div>') + '</div></section>';
 
-  // ---- where it went
-  h += '<section class="panel" style="--c:#E64980"><div class="phead"><div class="grow"><div class="eyebrow">This pay period</div>' +
-    '<div style="font-size:20px;font-weight:800">Where my money went</div></div></div><div style="padding:0 20px 16px">' + donut(typeTotals(mm)) +
-    '<div class="sub2" style="margin-top:10px">Types are guessed from the store name. Change one with the small menu on any line and that store remembers it.</div>' +
-    '<div style="margin-top:16px;font-weight:700;font-size:13px">Spent vs. saved by pay period</div>' + trendBars(mm) + '</div></section></div>';
-
-  // ---- history
   var P = (S.Periods || []).slice().sort(function (a, b) { return String(b.endDate).localeCompare(String(a.endDate)); });
   if (P.length) {
     h += '<section class="panel" style="--c:#868E96;margin-top:16px"><div class="phead"><div class="grow"><div class="eyebrow">History</div>' +
-      '<div style="font-size:20px;font-weight:800">Past pay periods</div></div></div><div class="rows">' + P.map(function (p) {
+      '<div style="font-size:20px;font-weight:800">Past pay periods</div></div></div><div class="rows">' + P.map(function (p, i) {
         return '<div class="fline"><div><b>' + (p.startDate ? shortDate(p.startDate) + ' – ' : '') + shortDate(p.endDate) + '</b><div class="sub2">Had ' + money(p.income) +
-          ' · cards ' + money(p.cards) + ' · spending ' + money(p.spend) + ' · bills ' + money(p.bills) + '</div></div><div class="num pos-txt">Saved ' + money(p.saved) + '</div><div></div></div>';
+          ' · cards ' + money(p.cards) + ' · spending ' + money(p.spend) + ' · bills ' + money(p.bills) + (+p.joint ? ' · covered for joint ' + money(p.joint) : '') + '</div></div>' +
+          '<div class="num pos-txt">Saved ' + money(p.saved) + '</div><div class="fl-tools">' + (i === 0 ? '<button class="link" data-act="reopen" data-id="' + esc(p.id) + '">Reopen</button>' : '') + '</div></div>';
       }).join('') + '</div></section>';
   }
   return h;
 }
 
-function closedPending() { try { return JSON.parse(setting('closedPending', '') || '[]'); } catch (e) { return []; } }
-function daysAgo(n) { var x = new Date(); x.setDate(x.getDate() - n); return x.getFullYear() + '-' + ('0' + (x.getMonth() + 1)).slice(-2) + '-' + ('0' + x.getDate()).slice(-2); }
+function wrapPanel(mm, m) {
+  var old = mm.P.old;
+  var owedOld = sum(old.lines.filter(function (l) { return !l.cover; }), function (l) { return l.amount; });
+  owedOld = Math.max(0, owedOld - mm.credit);
+  var sent = old.rows.filter(function (r) { return r.kind === 'cards'; });
+  var sentAmt = sum(sent, function (r) { return Math.abs(r.amount); });
+  var extraDone = old.joint > 0.009;
+  var suggest = extraDone ? 0 : r2(mm.jointShort);
+  var toSave = r2(mm.oldPot - (owedOld > 0.5 ? 0 : 0) - suggest);
+  var cardsOk = owedOld <= 0.5;
+  var savedOk = old.saved > 0 && mm.oldPot - suggest <= 5;
+  var steps = [
+    { ok: true, text: 'New paycheck in: ' + money(mm.newest.amount) + ' on ' + shortDate(mm.newest.date) + '. It starts the new pay period.' },
+    { ok: cardsOk, text: cardsOk ? (sentAmt ? 'Sent ' + money(sentAmt) + ' to the joint for the cards' + (extraDone ? ', including ' + money(old.joint) + ' to cover the joint' : '') : 'Nothing owed on the cards')
+        : 'Send <b>' + money(owedOld + suggest) + '</b> to the joint: your card share ' + money(owedOld) + (suggest ? ' + ' + money(suggest) + ' because the joint is short' : '') +
+          '. <span class="sub2">Tap + Add when you send it, or answer it when the bank shows it.</span>' },
+    { ok: savedOk, text: savedOk ? 'Moved ' + money(old.saved) + ' to savings' : toSave > 0.5 ? 'Move <b>' + money(toSave) + '</b> to M&amp;T savings or Ally' + (old.saved ? ' (moved ' + money(old.saved) + ' so far)' : '') : 'Nothing left to move to savings' }
+  ];
+  var info = [];
+  var nb = mm.P['new'];
+  info.push(nb.hasBills ? 'Bills for this pay period sent: ' + money(nb.bills) : 'Bills for this pay period: ' + money(mm.billsAmt) + ' set aside until you send it');
+  if (Math.abs(mm.passSit) > 0.009) info.push(money(mm.passSit) + ' of card money still to go out to the cards');
+  var allOk = steps.every(function (s) { return s.ok; });
+  return '<section class="panel" style="--c:#4C6EF5;margin-top:16px"><div class="phead"><div class="grow"><div class="eyebrow">Last pay period</div>' +
+    '<div style="font-size:20px;font-weight:800">Wrap-up checklist</div></div></div><div class="rows">' +
+    steps.map(function (s, i) { return '<div class="row step' + (s.ok ? ' done' : '') + '"><span class="stepdot">' + (s.ok ? '' : i + 1) + '</span><div>' + s.text + '</div></div>'; }).join('') +
+    info.map(function (t) { return '<div class="row step info"><span class="stepdot">i</span><div>' + t + '</div></div>'; }).join('') +
+    '</div><div class="pfoot"><span style="font-size:12px;color:var(--muted)">' + (allOk ? 'All set.' : 'You can wrap up anytime. Typed-in transfers link up when the bank catches up.') + '</span>' +
+    '<button class="btn' + (allOk ? ' primary' : '') + '" data-act="wrapup">Wrap up last pay period</button></div></section>';
+}
 
-function closePeriod() {
-  var mm = moneyMath(calc()), pid = uid('pp'), d = today();
-  undoLabel = 'closing the pay period';
-  var t = typeTotals(mm);
-  upsert('Periods', { id: pid, startDate: setting('periodStart', '') || setting('syncStart', ''), endDate: d, income: r2(mm.top), cards: r2(mm.owed + mm.cardExtra),
-                      spend: r2(mm.spent), bills: r2(mm.billsRows.length ? mm.billsDone : mm.reserve), saved: r2(mm.saved), byType: JSON.stringify(t) });
-  mm.cur.forEach(function (r) { upsert('Checking', { id: r.id, period: pid }); });
-  mm.cardLines.forEach(function (l) { if (!l.pending) upsert('Charges', { id: l.id, settled: pid }); });
-  mm.alreadyCounted.forEach(function (id) { upsert('Charges', { id: id, settled: pid }); });
-  // remember the pending ones counted here, so they aren't counted again once they post
-  var keep = mm.closedPend.filter(function (p, i) { return mm.usedPend[i] !== 1 && p.on >= daysAgo(45); });
-  mm.cardLines.forEach(function (l) { if (l.pending) { var c = find('Pending', l.id); keep.push({ cardId: c.cardId, amount: +c.amount, bankId: c.bankId || '', on: d }); } });
-  if (!find('Settings', 'closedPending')) S.Settings.push({ id: 'closedPending', value: '' });
-  upsert('Settings', { id: 'closedPending', value: JSON.stringify(keep) });
-  if (!find('Settings', 'periodStart')) S.Settings.push({ id: 'periodStart', value: '' });
-  upsert('Settings', { id: 'periodStart', value: d });
+/* file the old pot into history; the new paycheck's pot becomes the only one */
+function wrapUp() {
+  var mm = moneyMath(calc()); if (!mm.two) return;
+  var pid = uid('pp'), old = mm.P.old, led = mm.ledger.slice();
+  undoLabel = 'wrapping up the pay period';
+  var oldRows = mm.open.filter(function (r) { return r.kind && mm.potOfRow(r) === 'old'; });
+  var start = setting('periodStart', '') || oldRows.reduce(function (a, r) { return !a || r.date < a ? r.date : a; }, '');
+  var paid = old.lines.filter(function (l) { return l.cover; });
+  var coveredBy = {}; paid.forEach(function (l) { coveredBy[l.cover] = true; });
+  setSetting('wrapPrev_' + pid, JSON.stringify({ periodPay: setting('periodPay', ''), periodStart: setting('periodStart', '') }));
+  upsert('Periods', { id: pid, startDate: start, endDate: addDays(mm.cut, -1), income: r2(old.income),
+    cards: r2(sum(paid, function (l) { return l.amount; })), spend: r2(old.spend), bills: r2(old.bills + old.reserve), saved: r2(old.saved), joint: r2(old.joint),
+    byType: JSON.stringify(typeTotals(Object.assign({}, old, { lines: paid }))) });
+  oldRows.forEach(function (r) { upsert('Checking', { id: r.id, period: pid }); });
+  // card charges paid by the old pay period's card transfer are filed with it; ones not paid yet carry over
+  paid.forEach(function (l) { if (l.src === 'charge') upsert('Charges', { id: l.id, settled: pid + '>' + l.cover }); });
+  led.forEach(function (e) { if (!e.pid && e.cover && coveredBy[e.cover]) e.pid = pid; });
+  mm.dupes.forEach(function (cid) {
+    var e = led.filter(function (x) { return x.id === mm.dupeOf[cid]; })[0];
+    if (e && e.pid) upsert('Charges', { id: cid, settled: e.pid + '>' });
+  });
+  led = led.filter(function (e) { return !e.pid || (e.on || e.date || '9999') >= daysAgo(90); });
+  saveLedger(led);
+  mm.P['new'].rows.forEach(function (r) { if (r.pot) upsert('Checking', { id: r.id, pot: '' }); });
+  setSetting('periodPay', mm.newest.id);
+  setSetting('periodStart', mm.cut);
   render();
-  toast('Pay period closed. Starting fresh. <button class="toast-btn" data-act="undo">Undo</button>', 8000);
+  toast('Last pay period filed in History. <button class="toast-btn" data-act="undo">Undo</button>', 8000);
+}
+function reopen(pid) {
+  undoLabel = 'reopening the pay period';
+  (S.Checking || []).filter(function (r) { return r.period === pid; }).forEach(function (r) { upsert('Checking', { id: r.id, period: '' }); });
+  S.Charges.filter(function (c) { return String(c.settled || '').indexOf(pid + '>') === 0; }).forEach(function (c) {
+    var cov = String(c.settled).slice(pid.length + 1); upsert('Charges', { id: c.id, settled: cov ? 'ct:' + cov : '' });
+  });
+  var led = ledger(); led.forEach(function (e) { if (e.pid === pid) e.pid = ''; }); saveLedger(led);
+  var prev = {}; try { prev = JSON.parse(setting('wrapPrev_' + pid, '{}')); } catch (e) {}
+  setSetting('periodPay', prev.periodPay || ''); setSetting('periodStart', prev.periodStart || '');
+  removeRow('Periods', pid);
+  render();
+  toast('Reopened. <button class="toast-btn" data-act="undo">Undo</button>', 6000);
+}
+
+/* a bank line from a pay period you already wrapped up */
+function fileLastPeriod(id) {
+  var r = find('Checking', id), P = (S.Periods || []).slice().sort(function (a, b) { return String(b.endDate).localeCompare(String(a.endDate)); })[0];
+  if (!r || !P) return;
+  var a = Math.abs(r.amount), t = {}; try { t = JSON.parse(P.byType || '{}'); } catch (e) {}
+  if (r.amount > 0) { upsert('Checking', { id: id, kind: 'real', period: P.id }); upsert('Periods', { id: P.id, income: r2(+P.income + a) }); }
+  else {
+    var ty = typeOf(r.name); t[ty] = r2((t[ty] || 0) + a);
+    upsert('Checking', { id: id, kind: 'spend', period: P.id }); upsert('Periods', { id: P.id, spend: r2(+P.spend + a), byType: JSON.stringify(t) });
+  }
+}
+
+/* + Add: something you just did that the bank won't show until tomorrow */
+function addEntryBox() {
+  var dir = 'out';
+  var opts = function () { return (dir === 'out' ? OUT_KINDS : IN_KINDS).filter(function (k) { return k !== 'ignore'; })
+    .map(function (k) { return '<option value="' + k + '"' + (k === (dir === 'out' ? 'cards' : 'pay') ? ' selected' : '') + '>' + KIND_LABEL[k] + '</option>'; }).join(''); };
+  var el = modal('<h3>Add a transfer or purchase</h3><p style="margin-top:0">It counts right away. When the bank shows it, I’ll ask you to link them.</p>' +
+    '<form id="mform" class="addform"><div class="seg"><button type="button" class="on" data-dir="out">Money out</button><button type="button" data-dir="in">Money in</button></div>' +
+    '<label>Amount</label><input name="amount" inputmode="decimal" placeholder="0.00" autocomplete="off">' +
+    '<label>What is it?</label><select name="kind">' + opts() + '</select>' +
+    '<label>Note (optional)</label><input name="note" placeholder="e.g. cards + joint extra" autocomplete="off">' +
+    '<label>Date</label><input name="date" type="date" value="' + today() + '">' +
+    '<label class="chk"><input type="checkbox" name="next"> Count it toward the next pay period</label>' +
+    '<div class="mact"><button type="button" class="btn" data-m="no">Cancel</button><button class="btn primary">Add</button></div></form>');
+  var f = el.querySelector('#mform'); f.amount.focus();
+  el.onclick = function (e) {
+    var d = e.target.closest('[data-dir]');
+    if (d) { dir = d.dataset.dir; Array.prototype.forEach.call(el.querySelectorAll('[data-dir]'), function (b) { b.classList.toggle('on', b === d); }); f.kind.innerHTML = opts(); return; }
+    if (e.target.closest('[data-m="no"]') || e.target === el) closeModal();
+  };
+  f.onsubmit = function (e) {
+    e.preventDefault();
+    var a = parseAmt(f.amount.value); if (a === null || !a) { f.amount.focus(); f.amount.style.borderColor = 'var(--bad)'; return; }
+    var k = f.kind.value, note = f.note.value.trim(), id = uid('man');
+    closeModal();
+    undoLabel = 'adding ' + KIND_LABEL[k].toLowerCase();
+    upsert('Checking', { id: id, date: f.date.value || today(), name: note || KIND_LABEL[k], amount: dir === 'out' ? -Math.abs(a) : Math.abs(a), kind: k,
+                         pairId: '', period: '', order: nextOrder(S.Checking || []), pot: f.next.checked ? 'next' : '', manual: true, note: note, extra: 0, credit: 0, nolink: false });
+    if (k === 'cards') coverFor(id);
+    render();
+    toast('Added. It counts now and links up when the bank shows it. <button class="toast-btn" data-act="undo">Undo</button>', 6000);
+  };
+}
+function linkBox(bankId) {
+  var b = find('Checking', bankId), mm = moneyMath(calc());
+  var list = mm.manual.filter(function (x) { return (x.amount > 0) === (b.amount > 0); });
+  var el = modal('<h3>Link “' + esc(b.name) + '” ' + money(Math.abs(b.amount)) + '</h3><p style="margin-top:0">Which typed-in entry is it?</p><div class="pick">' +
+    (list.length ? list.map(function (x) { return '<button class="btn" data-pick="' + esc(x.id) + '">' + esc(KIND_LABEL[x.kind]) + ' · ' + money(Math.abs(x.amount)) + ' · ' + shortDate(x.date) + (x.note ? ' · ' + esc(x.note) : '') + '</button>'; }).join('')
+      : '<div class="empty">No typed-in entries going this direction.</div>') +
+    '</div><div class="mact"><button class="btn" data-m="no">Cancel</button></div>');
+  el.onclick = function (e) {
+    var p = e.target.closest('[data-pick]');
+    if (p) { closeModal(); undoLabel = 'linking'; linkRows(bankId, [p.dataset.pick]); render(); return; }
+    if (e.target.closest('[data-m="no"]') || e.target === el) closeModal();
+  };
 }
 
 function viewBank() {
@@ -1309,7 +1701,7 @@ function viewBank() {
     return '<div class="row g-acct"><div><div>' + esc(a.name) + '</div><div class="acct-bank">' + esc(a.bank) + '</div></div>' +
       '<div class="r num c-bal">' + money(a.balance) + '</div>' +
       '<select data-t="BankAccounts" data-id="' + esc(a.id) + '" data-f="cardId"><option value="">Don’t import</option>' +
-      '<option value="checking"' + (a.cardId === 'checking' ? ' selected' : '') + '>My checking (My Money)</option>' +
+      '<option value="checking"' + (a.cardId === 'checking' ? ' selected' : '') + '>My M&amp;T checking (My Money)</option>' +
       cards.map(function (c) { return '<option value="' + c.id + '"' + (c.id === a.cardId ? ' selected' : '') + '>' + esc(c.name) + '</option>'; }).join('') +
       '</select></div>';
   }).join('') : '<div class="empty">No accounts yet. Tap Sync now.</div>';
@@ -1320,9 +1712,13 @@ function viewBank() {
   return h;
 }
 function refreshData(note) {
-  api('getData').then(function (d) { S = d; render(); if (note) toast(note); }, function (e) { toast(esc(cleanMsg(e.message))); });
+  api('getData').then(function (d) { S = d; prep(); render(); if (note) toast(note); }, function (e) { toast(esc(cleanMsg(e.message))); });
 }
 
+function prep() {
+  ['Rules', 'CheckPending', 'Checking', 'Periods', 'Pending', 'TypeRules'].forEach(function (t) { if (!S[t]) S[t] = []; });
+  try { applyRules(); } catch (e) { console.error(e); }
+}
 function today() { var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
 
 /* ======================================================================= render */
@@ -1396,9 +1792,51 @@ document.addEventListener('click', function (e) {
   else if (a === 'pickwho') { lastWho = b.dataset.w; Array.prototype.forEach.call(b.parentNode.children, function (x) { x.classList.toggle('on', x === b); }); }
   else if (a === 'undo') { undo(); }
   else if (a === 'ckkind') {
-    var ckr = find('Checking', id);
+    var ckr = find('Checking', id), kk = b.dataset.k;
     undoLabel = 'answering “' + ckr.name + '”';
-    upsert('Checking', { id: id, kind: b.dataset.k }); render();
+    if (kk === 'lastpp') { fileLastPeriod(id); render(); return; }
+    setKind(id, kk); render();
+    if (/^(pay|real|spend|cardout|savings)$/.test(kk) && !GENERIC_NAME.test(ckr.name) && ruleKey(ckr.name))
+      toast('Always treat “' + esc(ckr.name) + '” as ' + esc(KIND_LABEL[kk].toLowerCase()) + '? <button class="toast-btn" data-act="addrule" data-name="' + esc(ruleKey(ckr.name)) + '" data-k="' + kk + '">Always</button>', 7000);
+  }
+  else if (a === 'addrule') {
+    if (!S.Rules) S.Rules = [];
+    undoLabel = 'remembering an answer';
+    upsert('Rules', { id: b.dataset.name, kind: b.dataset.k }); applyRules(); render();
+    toast('Got it. Those will be answered for you from now on.');
+  }
+  else if (a === 'cklink') { undoLabel = 'linking'; linkRows(id, b.dataset.with.split(',')); render(); toast('Linked. <button class="toast-btn" data-act="undo">Undo</button>', 5000); }
+  else if (a === 'cknolink') { undoLabel = 'not linking'; upsert('Checking', { id: id, nolink: true }); render(); }
+  else if (a === 'mmadd') { addEntryBox(); }
+  else if (a === 'delman') {
+    var mr = find('Checking', id);
+    undoLabel = 'deleting “' + mr.name + '”';
+    if (mr.kind === 'cards') uncoverFor(id);
+    removeRow('Checking', id); render();
+    toast('Deleted <button class="toast-btn" data-act="undo">Undo</button>', 6000);
+  }
+  else if (a === 'potnext') {
+    var pr = find('Checking', id), mmp = moneyMath(calc()), curPot = mmp.potOfRow(pr);
+    undoLabel = 'moving “' + pr.name + '”';
+    var want = mmp.two ? (curPot === 'new' ? 'last' : 'next') : (pr.pot === 'next' ? '' : 'next');
+    upsert('Checking', { id: id, pot: want }); render();
+  }
+  else if (a === 'keepcard') {
+    var mmk = moneyMath(calc());
+    undoLabel = 'keeping the leftover card money';
+    upsert('Checking', { id: uid('adj'), date: today(), name: 'Leftover card money kept as yours', amount: -r2(mmk.passSit), kind: 'pass', pairId: '', period: '', order: nextOrder(S.Checking), pot: '', manual: false, note: '', extra: 0, credit: 0, nolink: true });
+    render();
+  }
+  else if (a === 'wrapup') {
+    var mmw = moneyMath(calc());
+    confirmBox('Wrap up last pay period?', 'It’s filed in History and the page goes back to one pay period. Nothing changes in your Really yours number.' +
+      (mmw.unDep.length || mmw.unOut.length ? ' You still have unanswered checking items. They stay on the list.' : ''), 'Wrap up', wrapUp);
+  }
+  else if (a === 'reopen') { reopen(id); }
+  else if (a === 'holdnew') {
+    undoLabel = 'holding charges for next time';
+    b.dataset.ids.split(',').forEach(function (x) { var pp = x.split(':'); upsert(pp[0], { id: pp.slice(1).join(':'), hold: true }); });
+    render(); toast('Held for next time. <button class="toast-btn" data-act="undo">Undo</button>', 6000);
   }
   else if (a === 'ckpair') {
     var pw = b.dataset.with;
@@ -1406,11 +1844,6 @@ document.addEventListener('click', function (e) {
     upsert('Checking', { id: id, kind: 'pass', pairId: pw }); upsert('Checking', { id: pw, pairId: id }); render();
   }
   else if (a === 'mmdeps') { mmShowDeposits = !mmShowDeposits; render(); }
-  else if (a === 'closeperiod') {
-    var mmc = moneyMath(calc());
-    confirmBox('Close out this pay period?', 'Your list starts fresh, the card charges listed here are marked as paid back, and a summary is saved to History.' +
-      (mmc.unDep.length || mmc.unOut.length ? ' You still have unanswered checking items.' : ''), 'Close out', closePeriod);
-  }
   else if (a === 'clearcash') {
     var cl = (S.JointCash || []).slice();
     confirmBox('Clear out-of-pocket?', 'This takes the ' + cl.length + ' out-of-pocket item' + (cl.length === 1 ? '' : 's') + ' off the joint. Search can still find them.', 'Clear', function () {
@@ -1422,9 +1855,9 @@ document.addEventListener('click', function (e) {
     });
   }
   else if (a === 'hold') {
-    var hc = find('Charges', id);
+    var ht = b.dataset.t || 'Charges', hc = find(ht, id);
     undoLabel = (hc.hold ? 'taking “' : 'putting “') + hc.item + (hc.hold ? '” off hold' : '” on hold');
-    upsert('Charges', { id: id, hold: !hc.hold }); render();
+    upsert(ht, { id: id, hold: !hc.hold }); render();
   }
   else if (a === 'del') {
     var dr = find(b.dataset.t, id) || {};
@@ -1441,6 +1874,16 @@ document.addEventListener('click', function (e) {
       undoLabel = 'clearing ' + cc.name;
       var day = today();
       var toClear = S.Charges.filter(function (x) { return x.cardId === id && !x.hold; });
+      if ((S.Checking || []).length || setting('cardLedger', null) !== null) {
+        var mmx = moneyMath(calc()), led = mmx.ledger.slice(), dup = {}; mmx.dupes.forEach(function (d) { dup[d] = 1; });
+        toClear.forEach(function (x) {
+          var st = String(x.settled || '');
+          if (!(x.who === 'Eric' || x.who === 'Split') || dup[x.id] || (st && st.indexOf('ct:') !== 0)) return;
+          led.push({ id: uid('lg'), src: 'cleared', cardId: id, bankId: '', item: x.item, date: x.date || '', full: +x.amount,
+                     mine: x.who === 'Split' ? x.amount / 2 : +x.amount, split: x.who === 'Split', cover: st ? st.slice(3) : '', pid: '', on: today() });
+        });
+        saveLedger(led);
+      }
       var keepRows = toClear.map(function (x) {
         return { id: x.id, cardId: id, item: x.item, amount: x.amount, who: x.who, date: x.date || '', clearedOn: day };
       });
@@ -1524,6 +1967,14 @@ document.addEventListener('click', function (e) {
 function find(table, id) { return S[table].filter(function (r) { return r.id === id; })[0]; }
 
 document.addEventListener('change', function (e) {
+  var ck = e.target.dataset && e.target.dataset.ck;
+  if (ck && S) {
+    var v0 = e.target.value, cr = find('Checking', ck);
+    if (v0 === 'link') { render(); linkBox(ck); return; }
+    undoLabel = 'answering “' + cr.name + '”';
+    if (v0 === 'lastpp') fileLastPeriod(ck); else setKind(ck, v0);
+    render(); return;
+  }
   var el = e.target; if (!el.dataset || !el.dataset.t || !el.dataset.id) return;
   var t = el.dataset.t, f = el.dataset.f, id = el.dataset.id, v = el.value;
   if (f === 'amount' || f === 'total' || f === 'us' || f === 'budget' || (t === 'Settings' && id === 'christmasBudget')) {
@@ -1703,7 +2154,7 @@ function load() {
     return api('getData');
   }).then(function (data) {
     store('url', CONN.url); store('key', CONN.key);   // remember only once they work
-    S = data; status('All changes saved'); render();
+    S = data; prep(); status('All changes saved'); render();
   }, function (err) {
     queue = pending.concat(queue);
     if (authProblem(err)) { showConnect(cleanMsg(err.message)); return; }
