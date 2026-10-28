@@ -170,6 +170,26 @@
   .goal .amt .cell { width: 78px; }
   .goalbar { margin: 0 20px; height: 8px; border-radius: 99px; background: var(--line); overflow: hidden; }
   .goalbar i { display: block; height: 100%; background: var(--c, var(--good)); border-radius: 99px; }
+  .lr-body { padding: 0 20px 18px; }
+  .lr-need { padding: 12px 14px; background: #FFF8E6; border-radius: 10px; font-size: 14px; }
+  .lr-age { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .lr-age input[type=range] { flex: 1; min-width: 140px; accent-color: var(--c); }
+  .lr-row { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; margin: 8px 0; }
+  .lr-f { display: flex; flex-direction: column; gap: 2px; font-size: 11.5px; color: var(--muted); font-weight: 600; }
+  .lr-f .cell { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; width: 130px; margin: 0; }
+  .lr-chart { display: grid; grid-template-columns: repeat(11, minmax(0, 1fr)); gap: 4px; align-items: end; }
+  .lr-bar { display: flex; flex-direction: column; align-items: center; cursor: pointer; min-width: 0; }
+  .lr-col { height: 120px; width: 100%; display: flex; align-items: flex-end; }
+  .lr-col i { display: block; width: 100%; background: var(--c); opacity: .35; border-radius: 4px 4px 0 0; }
+  .lr-bar.on .lr-col i { opacity: 1; }
+  .lr-val { font-size: 10.5px; font-weight: 700; white-space: nowrap; }
+  .lr-x { font-size: 12px; font-weight: 700; margin-top: 3px; }
+  .lr-up { font-size: 10px; color: var(--good); min-height: 13px; white-space: nowrap; }
+  .lr-mk { font-size: 9.5px; color: var(--muted); text-align: center; min-height: 12px; line-height: 1.15; }
+  .lr-ef { display: flex; gap: 14px; align-items: center; }
+  .lr-kid { padding: 8px 0; border-top: 1px solid var(--line); }
+  .lr-kid:first-child { border-top: 0; }
+  @media (max-width: 560px) { .lr-val { font-size: 0; } .lr-bar.on .lr-val { font-size: 10px; } .lr-f .cell { width: 118px; } }
   .goalnote { padding: 6px 20px 10px; font-size: 12px; color: var(--muted); }
   .g-ro { grid-template-columns: 1fr 110px; }
   .r { text-align: right; }
@@ -430,6 +450,7 @@
       <button data-act="nav" data-v="bills">Monthly Bills</button>
       <button data-act="nav" data-v="money">My Money</button>
       <button data-act="nav" data-v="savings">Savings</button>
+      <button data-act="nav" data-v="long">Long range</button>
       <button data-act="nav" data-v="christmas">Christmas</button>
       <button data-act="nav" data-v="bank">Bank Sync</button>
     </nav>
@@ -2021,9 +2042,152 @@ function autoWrap() {
 function today() { var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
 
 /* ======================================================================= render */
+/* ======================================================================= long range
+   The 10–20 year view: NYSTRS Tier 6 pension, 403(b), Social Security, savings pace, emergency fund, the kids' 529s.
+   Everything is in today's dollars: salaries come from the 2026–27 KTA schedule (Master's column), so raises are assumed
+   to keep pace with inflation and only steps move you up. Your inputs live in one Settings row, 'longRange' (JSON).
+   Tier 6 rules (checked Oct 28, 2026): 1.67%/yr under 20 years, 35% at 20, +2%/yr past 20; final average salary = best 3
+   consecutive years (2024 law); unreduced at 63, or at 58 with 30 years (2026 budget); otherwise 6.5% less per year
+   under 63, earliest 55. NYSTRS contribution rate is set by salary two school years earlier (TRS kept the old brackets). */
+var KTA_MS_2026 = [48107, 49406, 52072, 54813, 57505, 60198, 62896, 66229, 69599, 72352, 75178, 77931, 82485, 87442, 90998, 94462,
+  97662, 100670, 103585, 107623, 109881];   // 2026–27 Salary Schedule 01, MS column, steps 1–21
+var LR_DEFAULT = { birth: '', svc: '', svcAsOf: '2026-06-30', step: 11, b403: '', per403: 20, b457: '', per457: 0, ss: '', age: 58,
+  saveTarget: '', efTarget: 6.5,
+  kids: [{ name: 'Giovanna', birth: '', bal: '', monthly: 40, goal: '' }, { name: 'Matteo', birth: '', bal: '', monthly: 0, goal: '' }] };
+function lrGet() { var v = {}; try { v = JSON.parse(setting('longRange', '') || '{}'); } catch (e) {} return Object.assign(JSON.parse(JSON.stringify(LR_DEFAULT)), v); }
+function lrSet(v) { setSetting('longRange', JSON.stringify(v)); }
+function yearsBetween(a, b) { return (new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / (365.25 * 864e5); }
+function addYears(d, n) { var x = new Date(d + 'T12:00:00'); x.setFullYear(x.getFullYear() + Math.floor(n)); x.setDate(x.getDate() + Math.round((n % 1) * 365.25)); return x.toISOString().slice(0, 10); }
+/* salary for the school year starting in September of sy, in today's dollars */
+function ktaSalary(lr, sy) { var st = Math.max(1, Math.min(21, (+lr.step || 1) + (sy - 2026))); return KTA_MS_2026[st - 1]; }
+function nystrsRate(sal) { return sal <= 45000 ? 0.03 : sal <= 55000 ? 0.035 : sal <= 75000 ? 0.045 : sal <= 100000 ? 0.0575 : 0.06; }
+/* pension if you retire on your birthday at age A */
+function pensionAt(lr, A) {
+  if (!lr.birth || lr.svc === '') return null;
+  var R = addYears(lr.birth, A), svc = Math.max(0, +lr.svc + yearsBetween(lr.svcAsOf || today(), R));
+  if (A < 55) return { A: A, svc: svc, early: true, yearly: 0 };
+  var f = svc < 20 ? 0.0167 * svc : 0.35 + 0.02 * (svc - 20);
+  var full = A >= 63 || (A >= 58 && svc >= 30), age = full ? 1 : Math.max(0.48, 1 - 0.065 * (63 - A));
+  var ry = +R.slice(0, 4), last = +R.slice(5, 7) >= 6 ? ry - 1 : ry - 2;    // last full school year before you retire
+  var fas = (ktaSalary(lr, last) + ktaSalary(lr, last - 1) + ktaSalary(lr, last - 2)) / 3;
+  return { A: A, R: R, svc: svc, factor: f, ageF: age, fas: fas, yearly: f * age * fas };
+}
+/* a balance growing at rate r with yearly additions, after n years */
+function grow(bal, perYear, r, n) { var b = +bal || 0; for (var i = 0; i < Math.floor(n); i++) b = b * (1 + r) + perYear; return b * Math.pow(1 + r, n % 1) + perYear * (n % 1); }
+function lrIn(key, val, ph, opts) {
+  opts = opts || {};
+  return '<label class="lr-f"><span>' + esc(opts.label || '') + '</span><input class="cell' + (opts.num ? ' num' : '') + '" ' + (opts.type ? 'type="' + opts.type + '"' : 'inputmode="decimal"') +
+    ' data-lr="' + key + '"' + (opts.kid != null ? ' data-kid="' + opts.kid + '"' : '') + ' value="' + esc(val) + '" placeholder="' + esc(ph || '') + '"></label>';
+}
+function lrPanel(title, eyebrow, body, c) {
+  return '<section class="panel" style="--c:' + (c || '#495057') + ';margin-bottom:16px"><div class="phead"><div class="grow"><div class="eyebrow">' + eyebrow + '</div>' +
+    '<div style="font-size:20px;font-weight:800">' + title + '</div></div></div><div class="lr-body">' + body + '</div></section>';
+}
+function viewLong() {
+  var lr = lrGet(), h = '<h1>Long range</h1><p class="sub">The next 10–20 years, in today’s dollars. An estimate, not advice: when this and your NYSTRS Benefit Profile disagree, the Benefit Profile is right.</p>';
+  var pays = (S.Checking || []).filter(isPay).sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
+  var takeHome = r2((pays[0] ? pays[0].amount : 1862.12) * 26 / 12);
+  var nowAge = lr.birth ? yearsBetween(lr.birth, today()) : null;
+  var A = +lr.age || 58, P = pensionAt(lr, A);
+  var yrsTo = nowAge != null ? Math.max(0, A - nowAge) : 0;
+  var match = Math.min((+lr.per403 || 0) * 26 * 0.5, (+lr.step || 1) >= 11 ? 500 : 250);   // district 403(b) match: 50%, up to $250 (steps 1–10) or $500
+  var r403 = {}; [0.03, 0.05, 0.07].forEach(function (r) { r403[r] = grow(+lr.b403 + (+lr.b457 || 0), (+lr.per403 || 0) * 26 + match + (+lr.per457 || 0) * 26, r, yrsTo); });
+  var draw = r403[0.05] * 0.04 / 12, ss = +lr.ss || 0;
+  var pensM = P ? P.yearly / 12 : 0, total = pensM + draw + (A >= 67 ? ss : 0);
+
+  /* 1. the retirement picture */
+  var b = '';
+  if (!P) b += '<div class="lr-need">Add your birth date and NYSTRS service credit below to see your pension.</div>';
+  else {
+    b += '<div class="lr-age"><b>Retire at ' + A + '</b> <input type="range" min="55" max="67" step="1" value="' + A + '" data-lr="age" aria-label="Retirement age"> <span class="sub2">' +
+      (P.R ? shortDate(P.R) + ', ' + P.R.slice(0, 4) : '') + ' · ' + P.svc.toFixed(1) + ' years of service</span></div>';
+    b += '<div class="tiles" style="margin:12px 0">' + tile('Each month at ' + A, total, { hint: A >= 67 || !ss ? '' : 'Plus ' + money(ss) + ' Social Security from 67' }) +
+      tile('Today’s take-home', takeHome, { hint: 'per month' }) + tile('Pension', pensM, { hint: P.early ? 'Can’t start before 55' : (P.factor * 100).toFixed(1) + '% × ' + (P.ageF < 1 ? Math.round(P.ageF * 100) + '% for age × ' : '') + money(P.fas) + ' average salary' }) +
+      tile('From the 403(b)' + (+lr.b457 ? ' + 457' : ''), draw, { hint: '4% a year of ' + money(r403[0.05]) + (lr.b403 === '' ? ' · add your balance' : '') }) + '</div>';
+    var gap = r2(total - takeHome);
+    b += '<p class="sub2">' + (gap >= 0 ? 'That’s ' + money(gap) + ' a month more than you take home now.' : 'That’s ' + money(-gap) + ' a month less than you take home now.') +
+      ' Your pension isn’t taxed by New York State; federal tax still applies. Once retired, the NYSTRS cost-of-living raise is small, so the pension slowly buys less.</p>';
+    /* one more year: pension at every age 55–65 */
+    var ages = []; for (var a = 55; a <= 65; a++) ages.push(pensionAt(lr, a));
+    var maxY = Math.max.apply(null, ages.map(function (p) { return p.yearly; })) || 1;
+    var marks = function (p, prev) {
+      var m = [];
+      if (prev && prev.svc < 20 && p.svc >= 20) m.push('20 years'); if (p.A === 58) m.push('58');
+      if (prev && prev.svc < 30 && p.svc >= 30) m.push('30 years'); if (p.A === 63) m.push('63');
+      return m.join(' · ');
+    };
+    b += '<div class="eyebrow" style="margin:16px 0 6px">What one more year is worth (pension per month)</div><div class="lr-chart">' + ages.map(function (p, i) {
+      var prev = ages[i - 1], up = prev && prev.yearly ? p.yearly - prev.yearly : 0, mk = marks(p, prev);
+      return '<div class="lr-bar' + (p.A === A ? ' on' : '') + '" data-act="lrage" data-v="' + p.A + '" title="Age ' + p.A + '"><div class="lr-val num">' + money(p.yearly / 12).replace('.00', '').replace(/\.\d\d$/, '') + '</div>' +
+        '<div class="lr-col"><i style="height:' + Math.max(2, p.yearly / maxY * 100).toFixed(1) + '%"></i></div><div class="lr-x">' + p.A + '</div>' +
+        '<div class="lr-up">' + (up > 1 ? '+' + money(up / 12).replace(/\.\d\d$/, '') : '') + '</div><div class="lr-mk">' + esc(mk) + '</div></div>';
+    }).join('') + '</div><p class="sub2">Tap an age to pick it. “+” is what that one extra year adds per month. Unreduced at 63, or at 58 with 30 years; otherwise 6.5% less for each year under 63.</p>';
+    /* contribution bracket heads-up */
+    for (var sy = 2026; sy <= 2034; sy++) {
+      if (nystrsRate(ktaSalary(lr, sy)) > nystrsRate(ktaSalary(lr, sy - 1))) {
+        var newR = nystrsRate(ktaSalary(lr, sy)), oldR = nystrsRate(ktaSalary(lr, sy - 1)), payY = sy + 2;
+        b += '<p class="sub2"><b>Heads-up:</b> at step ' + Math.min(21, +lr.step + sy - 2026) + ' (' + sy + '–' + String(sy + 1).slice(2) + ', ' + money(ktaSalary(lr, sy)) + ') your NYSTRS contribution goes from ' + (oldR * 100) + '% to ' + (newR * 100) +
+          '% starting ' + payY + '–' + String(payY + 1).slice(2) + ' (it’s set by your salary two years earlier): about ' + money(ktaSalary(lr, payY) * (newR - oldR) / 26) + ' less per paycheck.</p>';
+        break;
+      }
+    }
+  }
+  h += lrPanel('Retirement income', 'Pension + 403(b) + Social Security', b, '#1C7ED6');
+
+  /* 2. savings on track */
+  var yr = today().slice(0, 4), Ps = (S.Periods || []).filter(function (p) { return String(p.endDate).slice(0, 4) === yr; });
+  var saved = sum(Ps, function (p) { return p.saved; }), cov = sum(Ps, function (p) { return p.joint; }), n = Ps.length, avg = n ? saved / n : 0, tgt = +lr.saveTarget || 0;
+  b = '<div class="tiles" style="margin-bottom:10px">' + tile('Saved in ' + yr, saved, { hint: n + ' pay period' + (n === 1 ? '' : 's') + ' wrapped up' }) + tile('Per pay period', avg) +
+    tile('Covered for the joint', cov, { hint: 'money that didn’t get saved' }) + '</div>' +
+    '<div class="lr-row">' + lrIn('saveTarget', lr.saveTarget, '0.00', { label: 'My target per pay period $', num: 1 }) +
+    (tgt ? '<span class="sub2">' + (avg >= tgt ? 'Ahead by ' + money(avg - tgt) + ' a pay period.' : 'Behind by ' + money(tgt - avg) + ' a pay period.') + '</span>' : '') + '</div>' +
+    (n < 3 ? '<p class="sub2">History starts when you started wrapping up pay periods, so this looks thin for now.</p>' : '');
+  h += lrPanel('Savings on track', 'From your wrap-ups', b, '#2B8A3E');
+
+  /* 3. emergency fund, in pay periods of bills (your savings minus Specialty, whose funds have their own jobs) */
+  var sp = specialtyAcct(), ef = sum(savingsAccts('mine').filter(function (a) { return a !== sp; }), function (a) { return a.balance; });
+  var bpp = r2(calc().paycheck) || 1406, eft = +lr.efTarget || 6.5, pp = ef / bpp;
+  b = '<div class="lr-ef"><div class="big num">' + pp.toFixed(1) + '</div><div>pay periods of bills set aside<div class="sub2">' + money(ef) + ' in your savings (not counting Specialty) ÷ ' + money(bpp) + ' bills per paycheck</div></div></div>' +
+    '<div class="goalbar" style="margin:10px 0"><i style="width:' + Math.min(100, pp / eft * 100).toFixed(1) + '%;background:#2B8A3E"></i></div>' +
+    '<div class="lr-row">' + lrIn('efTarget', lr.efTarget, '6.5', { label: 'Target (pay periods)', num: 1 }) +
+    '<span class="sub2">' + (pp >= eft ? 'Target reached.' : money((eft - pp) * bpp) + ' to go. 6.5 pay periods ≈ 3 months of bills; 13 ≈ 6 months.') + '</span></div>';
+  h += lrPanel('Emergency fund', 'Family goals', b, '#E8590C');
+
+  /* 4. the kids' 529s */
+  b = (lr.kids || []).map(function (k, i) {
+    var age = k.birth ? yearsBetween(k.birth, today()) : null, left = age != null ? Math.max(0, 18 - age) : null;
+    var at18 = left != null ? grow(+k.bal || 0, (+k.monthly || 0) * 12, 0.05, left) : null, goal = +k.goal || 0, need = '';
+    if (goal && left > 0 && at18 < goal) {
+      var rr = Math.pow(1.05, 1 / 26) - 1, nn = left * 26, fv0 = (+k.bal || 0) * Math.pow(1.05, left);
+      var already = grow(0, (+k.monthly || 0) * 12, 0.05, left), per = (goal - fv0 - already) * rr / (Math.pow(1 + rr, nn) - 1);
+      need = 'Add about <b>' + money(per) + '</b> a paycheck to reach ' + money(goal) + '.';
+    } else if (goal && at18 >= goal) need = 'On track for ' + money(goal) + '.';
+    return '<div class="lr-kid"><div class="lr-row"><b style="min-width:80px">' + esc(k.name) + '</b>' + lrIn('birth', k.birth, '', { label: 'Birth date', type: 'date', kid: i }) +
+      lrIn('bal', k.bal, '0.00', { label: '529 $', num: 1, kid: i }) + lrIn('monthly', k.monthly, '0', { label: 'Per month $', num: 1, kid: i }) + lrIn('goal', k.goal, '0', { label: 'Goal $', num: 1, kid: i }) + '</div>' +
+      (left != null ? '<div class="sub2">' + (left > 0 ? left.toFixed(1) + ' years until 18 · about <b>' + money(at18) + '</b> by then at 5%. ' : 'Turned 18. ') + need + '</div>' : '') + '</div>';
+  }).join('');
+  h += lrPanel('College funds', 'NY 529', b, '#D6336C');
+
+  /* your numbers */
+  b = '<div class="lr-row">' + lrIn('birth', lr.birth, '', { label: 'Your birth date', type: 'date' }) + lrIn('svc', lr.svc, 'e.g. 10.0', { label: 'NYSTRS service credit (years)', num: 1 }) +
+    lrIn('svcAsOf', lr.svcAsOf, '', { label: 'as of', type: 'date' }) + lrIn('step', lr.step, '11', { label: 'Step this year (2026–27)', num: 1 }) + '</div>' +
+    '<div class="lr-row">' + lrIn('b403', lr.b403, '0.00', { label: '403(b) balance $', num: 1 }) + lrIn('per403', lr.per403, '20', { label: '403(b) per paycheck $', num: 1 }) +
+    lrIn('b457', lr.b457, '0.00', { label: '457 balance $', num: 1 }) + lrIn('per457', lr.per457, '0', { label: '457 per paycheck $', num: 1 }) + lrIn('ss', lr.ss, '0', { label: 'Social Security at 67, per month $', num: 1 }) + '</div>' +
+    '<p class="sub2">Service credit: your Benefit Profile on MyNYSTRS. Social Security: your statement at ssa.gov. Your step sets your salary (' + money(ktaSalary(lr, 2026)) + ' this year, Master’s column); it goes up one each September until step 21. ' +
+    'The district matches half your 403(b), up to ' + money((+lr.step || 1) >= 11 ? 500 : 250) + ' a year' + (match ? ': you get ' + money(match) + '.' : '.') + ' Returns: 5% a year after inflation (3% to 7%: ' + money(r403[0.03]) + ' to ' + money(r403[0.07]) + ' at ' + A + ').</p>';
+  h += lrPanel('Your numbers', 'Update about once a year', b, '#868E96');
+  return h;
+}
+function lrChange(el) {
+  var lr = lrGet(), k = el.dataset.lr, v = el.value.trim();
+  if (el.type !== 'date') { var n = parseAmt(v); v = v === '' ? '' : n === null ? null : n; if (v === null) { render(); return; } }
+  if (el.dataset.kid != null) lr.kids[+el.dataset.kid][k] = v; else lr[k] = v;
+  undoLabel = 'editing Long range'; lrSet(lr); render();
+}
+
 function render() {
   var m = calc();
-  var views = { cards: viewCards, joint: viewJoint, bills: viewBills, money: viewMoney, savings: viewSavings, christmas: viewChristmas, bank: viewBank, search: viewSearch };
+  var views = { cards: viewCards, joint: viewJoint, bills: viewBills, money: viewMoney, savings: viewSavings, long: viewLong, christmas: viewChristmas, bank: viewBank, search: viewSearch };
   if (!views[view]) view = 'cards';
   document.getElementById('app').innerHTML = views[view](m);
   Array.prototype.forEach.call(document.querySelectorAll('nav button'), function (b) { b.classList.toggle('on', b.dataset.v === view); });
@@ -2143,6 +2307,7 @@ document.addEventListener('click', function (e) {
     upsert('Checking', { id: id, kind: 'pass', pairId: pw }); upsert('Checking', { id: pw, pairId: id }); render();
   }
   else if (a === 'mmdeps') { mmShowDeposits = !mmShowDeposits; render(); }
+  else if (a === 'lrage') { var lrv = lrGet(); lrv.age = +b.dataset.v; lrSet(lrv); render(); }
   else if (a === 'svother') { svShowOther = !svShowOther; render(); }
   else if (a === 'logfunds') {
     var mmL = moneyMath(calc()), spl = fundSplit(+b.dataset.v || 0);
@@ -2285,6 +2450,7 @@ function setJointKind(id, k) {
   render();
 }
 document.addEventListener('change', function (e) {
+  if (e.target.dataset && e.target.dataset.lr && S) { lrChange(e.target); return; }
   var jk = e.target.dataset && e.target.dataset.jk;
   if (jk && S) { setJointKind(jk, e.target.value); return; }
   var ck = e.target.dataset && e.target.dataset.ck;
