@@ -465,7 +465,7 @@ var CONN = { url: remember('url'), key: remember('key') };
    New features are built there first; they move to the real page only once Eric has tried them. */
 var PREVIEW = /\/beta\/(index\.html)?$/.test(location.pathname);
 var PREVIEW_READS = { getData: 1, getHistory: 1, ping: 1 };
-var PREVIEW_NEW = ['Bank Sync: nicknames for your bank accounts'];      // what's being tried in the preview right now, one short line each
+var PREVIEW_NEW = [];      // what's being tried in the preview right now, one short line each
 function previewBanner() {
   if (!PREVIEW) return;
   document.title = 'Bills · Preview';

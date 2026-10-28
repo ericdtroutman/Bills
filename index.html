@@ -366,6 +366,7 @@
   .g-acct { grid-template-columns: 1fr 110px 190px; }
   .g-acct select, .datein { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: #fff; width: 100%; }
   .acct-bank { font-size: 11.5px; color: var(--muted); }
+  .acct-nick { font-weight: 600; }
   @media (max-width: 820px) { .g-acct { grid-template-columns: 1fr 150px; } .g-acct .c-bal { display: none; } }
   body.locked nav, body.locked .top-right { display: none; }
   .connect { max-width: 440px; margin: 40px auto; background: #fff; border-radius: 20px; box-shadow: var(--shadow); padding: 28px; }
@@ -874,6 +875,8 @@ function viewJoint(m) {
 var JOINT_KIND_LABEL = { spend: 'Joint spending', bill: 'Monthly bill', move: 'Transfer', typed: 'Already typed in', ignore: 'Leave it out', in: 'Money in' };
 var JOINT_OUT_KINDS = ['spend', 'bill', 'move', 'typed', 'ignore'];
 var JOINT_MOVE_WORDS = /transfer|xfer|zelle|venmo|cash app|paypal|savings|\bsav\b|from check|to check|withdraw|payroll|deposit/i;
+/* a bank account's nickname (set on Bank Sync), or the bank's own name */
+function acctLabel(a) { return a ? String(a.nick || a.name || '') : ''; }
 function jointAcct() {
   var set = setting('jointAccount', '');
   var list = S.BankAccounts || [];
@@ -936,7 +939,7 @@ function jointBankPanel(jm) {
   if (!acct) return '';
   jm = jm || jointMath();
   var h = '<section class="panel fudget" style="--c:#FAB005;margin-bottom:16px"><div class="phead"><div class="grow"><div class="eyebrow">Joint checking</div>' +
-    '<div style="font-size:20px;font-weight:800">Joint checking at the bank</div><div class="sub2">' + esc(acct.name) + ' · M&amp;T balance' +
+    '<div style="font-size:20px;font-weight:800">Joint checking at the bank</div><div class="sub2">' + esc(acctLabel(acct)) + ' · M&amp;T balance' +
     (jm.pending ? ' · ' + money(jm.pending) + ' pending' : '') + '</div></div>' +
     '<div class="big num">' + money(acct.balance) + '<small>at the bank</small></div></div>';
   h += '<div class="fline top"><div><b>Debit spending from the joint</b><div class="sub2">Counts against Left, like out-of-pocket. Not-answered lines count until you say otherwise.</div></div>' +
@@ -1834,10 +1837,11 @@ function viewBank() {
     '<div style="font-size:20px;font-weight:800">SimpleFIN</div></div><div class="pactions">' +
     '<button class="btn primary" data-act="banksync">Sync now</button></div></div>' +
     (msg ? '<div class="notice bad">' + esc(msg) + '</div>' : '') +
-    '<div class="hrow g-acct"><div>Account</div><div class="r c-bal">Balance</div><div>Goes to card</div></div><div class="rows">';
+    '<div class="hrow g-acct"><div>Account <span style="text-transform:none;letter-spacing:0;font-weight:600">· tap a name to rename it</span></div><div class="r c-bal">Balance</div><div>Goes to card</div></div><div class="rows">';
   var cards = S.Cards.slice().sort(byOrder);
   h += accts.length ? accts.map(function (a) {
-    return '<div class="row g-acct"><div><div>' + esc(a.name) + '</div><div class="acct-bank">' + esc(a.bank) + '</div></div>' +
+    return '<div class="row g-acct"><div>' + textCell('BankAccounts', a.id, 'nick', a.nick || '', a.name, 'acct-nick') +
+      '<div class="acct-bank">' + (a.nick ? esc(a.name) + ' · ' : '') + esc(a.bank) + '</div></div>' +
       '<div class="r num c-bal">' + money(a.balance) + '</div>' +
       '<select data-t="BankAccounts" data-id="' + esc(a.id) + '" data-f="cardId"><option value="">Don’t import</option>' +
       '<option value="checking"' + (a.cardId === 'checking' ? ' selected' : '') + '>My M&amp;T checking (My Money)</option>' +
