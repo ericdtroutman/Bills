@@ -34,7 +34,8 @@ var TABLES = {
   TypeRules:   ['id', 'type'],
   Rules:       ['id', 'kind'],
   CheckPending: ['id', 'date', 'name', 'amount'],
-  JointBank:   ['id', 'date', 'name', 'amount', 'pending']       // copy of the joint checking's recent lines (preview feature)
+  JointBank:   ['id', 'date', 'name', 'amount', 'pending'],      // copy of the joint checking's recent lines, rewritten on every sync
+  JointKinds:  ['id', 'kind', 'amount', 'date']                 // your answer for each joint checking line (same id as JointBank)
 };
 var NUMBER_FIELDS = { amount: 1, total: 1, us: 1, budget: 1, order: 1, balance: 1, income: 1, cards: 1, spend: 1, bills: 1, saved: 1,
                       extra: 1, credit: 1, joint: 1 };
@@ -536,8 +537,8 @@ function syncBank_() {
 
 /*
  * Joint checking (preview feature): keeps a copy of the joint account's recent lines, posted and pending,
- * in the JointBank tab. It is rewritten on every sync and nothing in the real app reads it yet; the preview
- * page uses it to show joint debit-card spending. The joint account is the one named in the jointAccount
+ * in the JointBank tab. It is rewritten on every sync; the Joint page shows it, and your answers are kept in
+ * JointKinds so they survive the rewrite. The joint account is the one named in the jointAccount
  * setting, or else the unmatched account whose name has both "joint" and "check" in it.
  */
 function jointAccountKey_() {
