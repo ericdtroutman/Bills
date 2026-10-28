@@ -19,12 +19,12 @@ var TABLES = {
   Charges:     ['id', 'cardId', 'item', 'amount', 'who', 'order', 'date', 'bankId', 'hold', 'settled'],
   Joint:       ['id', 'item', 'amount', 'order'],
   Bills:       ['id', 'payOn', 'name', 'total', 'us', 'paid', 'note', 'order', 'status', 'url', 'username', 'password'],
-  Funds:       ['id', 'name', 'color', 'order'],
+  Funds:       ['id', 'name', 'color', 'order', 'target', 'perCheck'],   // target: goal amount; perCheck: set aside from each paycheck's leftover
   FundEntries: ['id', 'fundId', 'date', 'note', 'amount', 'order'],
   People:      ['id', 'name', 'budget', 'order'],
   Gifts:       ['id', 'personId', 'item', 'amount', 'order'],
   Settings:    ['id', 'value'],
-  BankAccounts: ['id', 'name', 'bank', 'cardId', 'balance', 'nick'],   // nick: your own name for the account
+  BankAccounts: ['id', 'name', 'bank', 'cardId', 'balance', 'nick', 'saveAs'],   // nick: your own name; saveAs: mine / joint / out (Savings page)
   Imported:    ['id', 'date', 'amount', 'cardId'],
   History:     ['id', 'cardId', 'item', 'amount', 'who', 'date', 'clearedOn'],
   Pending:     ['id', 'cardId', 'item', 'amount', 'who', 'date', 'bankId', 'hold'],
@@ -38,11 +38,11 @@ var TABLES = {
   JointKinds:  ['id', 'kind', 'amount', 'date']                 // your answer for each joint checking line (same id as JointBank)
 };
 var NUMBER_FIELDS = { amount: 1, total: 1, us: 1, budget: 1, order: 1, balance: 1, income: 1, cards: 1, spend: 1, bills: 1, saved: 1,
-                      extra: 1, credit: 1, joint: 1 };
+                      extra: 1, credit: 1, joint: 1, target: 1, perCheck: 1 };
 var BOOL_FIELDS = { paid: 1, hold: 1, manual: 1, nolink: 1, pending: 1 };
 var TEXT_FIELDS = { id: 1, cardId: 1, fundId: 1, personId: 1, item: 1, name: 1, note: 1, who: 1,
                     payOn: 1, color: 1, date: 1, value: 1, status: 1,
-                    url: 1, username: 1, password: 1, bank: 1, bankId: 1, clearedOn: 1, nick: 1, other: 1, kind: 1, pairId: 1, period: 1, settled: 1, startDate: 1, endDate: 1, byType: 1, savedTo: 1, type: 1, pot: 1 };
+                    url: 1, username: 1, password: 1, bank: 1, bankId: 1, clearedOn: 1, nick: 1, other: 1, kind: 1, pairId: 1, period: 1, settled: 1, startDate: 1, endDate: 1, byType: 1, savedTo: 1, type: 1, pot: 1, saveAs: 1 };
 
 /* ---------------------------------------------------------------- entry points */
 
