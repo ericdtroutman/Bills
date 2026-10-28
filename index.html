@@ -877,6 +877,9 @@ var JOINT_OUT_KINDS = ['spend', 'bill', 'move', 'typed', 'ignore'];
 var JOINT_MOVE_WORDS = /transfer|xfer|zelle|venmo|cash app|paypal|savings|\bsav\b|from check|to check|withdraw|payroll|deposit/i;
 /* a bank account's nickname (set on Bank Sync), or the bank's own name */
 function acctLabel(a) { return a ? String(a.nick || a.name || '') : ''; }
+function acctById(id) { return (S.BankAccounts || []).filter(function (a) { return a.id === id; })[0] || null; }
+/* a transfer between your own accounts, named with your nickname: "To Joint savings" / "From My checking" ('' if not a known transfer) */
+function xferName(r) { var a = r && r.other ? acctById(r.other) : null; return a ? (r.amount < 0 ? 'To ' : 'From ') + acctLabel(a) : ''; }
 function jointAcct() {
   var set = setting('jointAccount', '');
   var list = S.BankAccounts || [];
@@ -957,7 +960,8 @@ function jointBankPanel(jm) {
     var r = l.row, chips = '';
     if (r.pending) chips += '<span class="pchip">pending</span>';
     if (l.carried) chips += '<span class="pchip">answer kept from pending</span>';
-    var sub = shortDate(r.date) + ' · joint checking';
+    var shownName = xferName(r) || r.name;
+    var sub = (xferName(r) ? esc(r.name) + ' · ' : '') + shortDate(r.date) + ' · joint checking';
     if (!l.counted) sub += ' · before ' + shortDate(jm.since) + ', not counted';
     else if (r.amount > 0) sub += ' · money in';
     else if (!l.answered && l.guess === 'bill') sub += ' · looks like the ' + esc(l.bill.name) + ' bill';
@@ -969,7 +973,7 @@ function jointBankPanel(jm) {
       '<button class="qbtn on" data-act="jkset" data-id="' + esc(l.id) + '" data-k="typed">Yes, already typed in</button></div>' : '';
     var tools = r.amount < 0 ? jointKindSelect(l) : '<span class="tchip" style="--tc:#2B8A3E">Money in</span>';
     return '<div class="fline' + (l.ask ? ' needs' : '') + (!l.counted || (!l.spend && r.amount < 0) ? ' reserve' : '') + '"><div><div>' +
-      (r.pending ? '<i>' + esc(r.name) + '</i>' : esc(r.name)) + chips + '</div><div class="sub2">' + sub + '</div>' + hint + '</div>' +
+      (r.pending ? '<i>' + esc(shownName) + '</i>' : esc(shownName)) + chips + '</div><div class="sub2">' + sub + '</div>' + hint + '</div>' +
       '<div class="num ' + (r.amount > 0 ? 'pos-txt' : l.spend ? 'neg-out' : '') + '">' + (r.amount > 0 ? '+ ' : '− ') + money(Math.abs(r.amount)) + '</div>' +
       '<div class="fl-tools">' + tools + '</div></div>';
   }).join('') : '<div class="empty">No lines yet. They come in with the daily bank sync.</div>';
@@ -1541,8 +1545,8 @@ function questionsHtml(mm) {
     var kinds = r.amount > 0 ? IN_KINDS : OUT_KINDS;
     btns = kinds.map(function (k) { return qb(id, k, KIND_LABEL[k], k === 'ignore' ? 'muted' : '', KIND_HELP[k]); }).join('');
     if (lastP && startDate && r.date < startDate) btns += qb(id, 'lastpp', 'Belongs to last pay period', 'muted', 'Files it with the pay period you already wrapped up');
-    h += '<div class="row q-row"><div><b>' + esc(r.name) + '</b> <span class="num ' + (r.amount > 0 ? 'pos-txt' : '') + '">' + (r.amount > 0 ? '+' : '−') + money(amt) + '</span>' +
-      '<div class="sub2">' + shortDate(r.date) + ' · M&amp;T checking · ' + (r.amount > 0 ? 'money in' : 'money out') + '</div>' + hint +
+    h += '<div class="row q-row"><div><b>' + esc(xferName(r) || r.name) + '</b> <span class="num ' + (r.amount > 0 ? 'pos-txt' : '') + '">' + (r.amount > 0 ? '+' : '−') + money(amt) + '</span>' +
+      '<div class="sub2">' + (xferName(r) ? esc(r.name) + ' · ' : '') + shortDate(r.date) + ' · M&amp;T checking · ' + (r.amount > 0 ? 'money in' : 'money out') + '</div>' + hint +
       '<div class="q-btns">' + btns + '</div></div></div>';
   });
   return h + '</div></section>';
@@ -1580,16 +1584,17 @@ function potLines(mm, key) {
     var base = { date: r.date, ck: r, mm: mm, del: r.manual ? r.id : '', chips: chipFor(r), next: isPay(r) ? undefined : nextOn, pots: two ? key : '',
                  nextAct: 'potnext', nextId: r.id };
     var src = r.manual ? 'Typed in' + (r.note && r.name !== r.note ? '' : '') : 'M&T checking';
-    if (r.amount > 0) out.push(Object.assign(base, { name: r.name, amount: r.amount, sub: (isPay(r) ? 'Paycheck · ' : '') + src, fixed: isPay(r) ? 'Pay' : 'Money in' }));
-    else if (r.kind === 'bills') out.push(Object.assign(base, { name: 'Bills', amount: r.amount, sub: 'To the joint · ' + esc(r.name) + ' · ' + src, fixed: 'Bills' }));
-    else if (r.kind === 'savings') out.push(Object.assign(base, { name: 'To savings', amount: r.amount, sub: esc(r.name) + ' · ' + src, fixed: 'Savings' }));
-    else if (r.kind === 'extra') out.push(Object.assign(base, { name: 'Covered for the joint', amount: r.amount, sub: esc(r.name) + ' · ' + src, fixed: 'Covered for joint' }));
+    var xn = xferName(r), raw = xn ? esc(r.name) + ' · ' : '';        // your nickname for the other account, when it's a transfer
+    if (r.amount > 0) out.push(Object.assign(base, { name: xn || r.name, amount: r.amount, sub: (isPay(r) ? 'Paycheck · ' : '') + raw + src, fixed: isPay(r) ? 'Pay' : 'Money in' }));
+    else if (r.kind === 'bills') out.push(Object.assign(base, { name: 'Bills', amount: r.amount, sub: (xn ? esc(xn) : 'To the joint · ' + esc(r.name)) + ' · ' + src, fixed: 'Bills' }));
+    else if (r.kind === 'savings') out.push(Object.assign(base, { name: xn || 'To savings', amount: r.amount, sub: esc(r.name) + ' · ' + src, fixed: 'Savings' }));
+    else if (r.kind === 'extra') out.push(Object.assign(base, { name: 'Covered for the joint', amount: r.amount, sub: esc(xn || r.name) + ' · ' + src, fixed: 'Covered for joint' }));
     else if (r.kind === 'cards') {
       var covered = mm.lines.filter(function (l) { return l.cover === r.id; });
       var sub = 'Card transfer ' + money(Math.abs(r.amount)) + ' · paid ' + covered.length + ' card charge' + (covered.length === 1 ? '' : 's') + ' (' + money(sum(covered, function (l) { return l.amount; })) + ')' +
         (+r.credit ? ' · ' + money(r.credit) + ' toward the rest' : '') + ' · ' + src;
       out.push(Object.assign(base, { name: +r.extra ? 'Covered for the joint' : 'Card transfer', amount: -(+r.extra || 0), sub: sub, fixed: +r.extra ? 'Covered for joint' : 'Cards', muted: !(+r.extra) }));
-    } else out.push(Object.assign(base, { name: r.name, amount: r.amount, sub: src + (r.kind ? '' : ' · not answered yet'), type: true }));
+    } else out.push(Object.assign(base, { name: xn || r.name, amount: r.amount, sub: raw + src + (r.kind ? '' : ' · not answered yet'), type: !xn, fixed: xn ? 'Transfer' : '' }));
   });
   p.lines.forEach(function (l) {
     var how = l.cover ? 'paid with the card transfer' : l.cleared ? 'cleared on Cards, not sent yet' : 'not sent yet';
@@ -1664,7 +1669,7 @@ function viewMoney(m) {
   var other = mm.open.filter(function (r) { return r.kind === 'ignore' || PASS_KINDS[r.kind]; });
   h += '<div class="pfoot" style="padding:12px 0 0"><button class="link" data-act="mmdeps">' + (mmShowDeposits ? 'Hide' : 'Show') + ' passing-through, card money and already-handled lines (' + other.length + ')</button></div>';
   if (mmShowDeposits) h += '<section class="panel fudget"><div class="rows">' + (other.length ? other.sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); }).map(function (r) {
-    return moneyLine({ name: r.name, date: r.date, amount: r.amount, sub: (r.manual ? 'Typed in · matched, waiting for your answer' : 'M&amp;T checking') + (r.pairId ? ' · matched pair' : ''), ck: r, mm: mm, del: r.manual ? r.id : '' });
+    return moneyLine({ name: xferName(r) || r.name, date: r.date, amount: r.amount, sub: (xferName(r) ? esc(r.name) + ' · ' : '') + (r.manual ? 'Typed in · matched, waiting for your answer' : 'M&amp;T checking') + (r.pairId ? ' · matched pair' : ''), ck: r, mm: mm, del: r.manual ? r.id : '' });
   }).join('') : '<div class="empty">Nothing here.</div>') + '</div></section>';
 
   var P = (S.Periods || []).slice().sort(function (a, b) { return String(b.endDate).localeCompare(String(a.endDate)); });
