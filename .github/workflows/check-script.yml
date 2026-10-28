@@ -48,4 +48,25 @@ jobs:
 
           clasp list-deployments --json > /tmp/deps.json 2>/dev/null || echo '[]' > /tmp/deps.json
           node -e 'const d=JSON.parse(require("fs").readFileSync("/tmp/deps.json","utf8")); const l=Array.isArray(d)?d:[]; console.log("::notice title=Deployments::" + l.map(x=>"…"+String(x.deploymentId).slice(-6)+" "+(x.versionNumber?"v"+x.versionNumber:"HEAD")+" "+String(x.description||"").slice(0,40)).join(" | "))'
+
+          # Is the PASSCODE script property set? Make a short-lived test deployment of the current code,
+          # send it one empty ping, and read which refusal comes back. SETUP = property missing,
+          # PASSCODE = property set (an empty key is never right). The test deployment is removed after.
+          TMP_ID="$(clasp create-deployment --description "temporary passcode check" --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).deploymentId||"")}catch(e){console.log("")}})')"
+          if [ -n "$TMP_ID" ]; then
+            echo "::add-mask::$TMP_ID"
+            trap 'clasp delete-deployment "$TMP_ID" >/dev/null 2>&1 || true' EXIT
+            sleep 5
+            RESP="$(curl -sSL --max-time 60 -H 'Content-Type: text/plain;charset=utf-8' --data '{"key":"","fn":"ping"}' "https://script.google.com/macros/s/$TMP_ID/exec" || true)"
+            case "$RESP" in
+              *'"SETUP:'*)    echo "::warning title=Passcode setting::MISSING. Add PASSCODE in Apps Script > Project Settings > Script Properties before moving the web app to the new code." ;;
+              *'"PASSCODE:'*) echo "::notice title=Passcode setting::SET. The new code will accept the app's passcode." ;;
+              *'"LOCKED:'*)   echo "::warning title=Passcode setting::Locked from wrong tries; run this again in 15 minutes." ;;
+              *)              echo "::warning title=Passcode setting::Couldn't tell. Answer started: $(printf '%s' "$RESP" | tr -d '\n' | cut -c1-80)" ;;
+            esac
+            clasp delete-deployment "$TMP_ID" >/dev/null 2>&1 && echo "::notice title=Cleanup::Temporary deployment removed." || echo "::warning title=Cleanup::Couldn't remove the temporary deployment."
+            trap - EXIT
+          else
+            echo "::warning title=Passcode setting::Couldn't make a test deployment."
+          fi
           rm -f ~/.clasprc.json
