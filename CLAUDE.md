@@ -12,7 +12,7 @@ Eric's family budget app. The page (index.html) is served by GitHub Pages from m
 ## Preview first (beta/)
 - `beta/index.html` is the **preview**: the same app, opened at the site + `/beta/`. It reads Eric's real data (getData, getHistory) but `PREVIEW` blocks every save, backup and bank call, and a yellow bar says so. Reload resets it.
 - **Build new features in beta/index.html first.** List each one in `PREVIEW_NEW` (one short line) so the bar shows what's being tried. Eric tries it on his phone.
-- **Move a feature to the real app (root index.html) only when Eric says it's good**, tests pass for both (`tests.html` and `tests.html?app=beta`), and it's between paydays (one feature per pay period). Then remove its line from `PREVIEW_NEW`.
+- **Move a feature to the real app (root index.html) as soon as Eric says it's good** and tests pass for both (`tests.html` and `tests.html?app=beta`). There's no waiting for a pay period and no limit of one feature at a time (Eric's call, Oct 28, 2026); just don't move one in during the Friday-to-Monday payday overlap without saying so. Then remove its line from `PREVIEW_NEW`.
 - Fixes and changes to shared code go into **both** files. `diff index.html beta/index.html` should show only features still in preview.
 - Script changes a preview feature needs must be **additive only** (a new tab or a new field the real app ignores) so they can ship to Apps Script before the page change does.
 

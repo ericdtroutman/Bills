@@ -267,6 +267,60 @@ var SCENARIOS = [
   }
 ];
 
+// Joint checking lines from the bank (built in the preview first; skipped on a copy that doesn't have it yet)
+function jointData() {
+  var d = startingData();
+  d.BankAccounts.push({ id: 'mt|joint', name: 'Joint Checking (7298)', bank: 'M&T Bank', cardId: '', balance: 3000 });
+  d.Bills.push({ id: 'b_spec', payOn: '15th', name: 'Spectrum', total: 95, us: 95, paid: false, order: 3, status: '' });
+  d.Settings.push({ id: 'jointSince', value: '2026-10-20' });
+  d.JointKinds = [];
+  d.JointBank = [
+    { id: 'jb_in', date: '2026-10-23', name: 'Web Transfer From Check Available', amount: 1406, pending: false },
+    { id: 'jb_sav', date: '2026-10-24', name: 'Transfer to Savings Account', amount: -394, pending: false },
+    { id: 'jb_spec', date: '2026-10-24', name: 'Spectrum', amount: -95, pending: false },
+    { id: 'jb_weg', date: '2026-10-25', name: 'Wegmans #12', amount: -60, pending: false },
+    { id: 'jb_aldi', date: '2026-10-26', name: 'Aldi', amount: -20, pending: true },
+    { id: 'jb_old', date: '2026-10-10', name: 'Tops', amount: -40, pending: false }
+  ];
+  return d;
+}
+function jointLine(id) { return A.calc().jointBank.lines.filter(function (l) { return l.id === id; })[0] || {}; }
+SCENARIOS.push({
+  title: 'Debit spending from joint checking',
+  about: 'Joint checking lines come in from the bank. Debit spending you haven\'t answered counts against the joint\'s Left; transfers and bills don\'t. The joint is already $108.40 short from the card charges.',
+  needs: 'jointMath',
+  data: jointData(),
+  steps: [
+    { t: 'The bank shows a paycheck transfer in, savings, Spectrum, Wegmans, a pending Aldi, and an old Tops', run: function () {},
+      check: function () { var m = A.calc(), j = m.jointBank; return [
+        money('Debit spending counted (Wegmans + Aldi, not answered yet)', 80, j.spend),
+        yes('Transfer to savings guessed as a transfer', jointLine('jb_sav').guess === 'move'),
+        yes('Spectrum guessed as the Spectrum bill', jointLine('jb_spec').guess === 'bill'),
+        yes('Tops is before the joint started over, so it isn\'t counted', !jointLine('jb_old').counted),
+        yes('Two lines need an answer', j.ask === 2, j.ask + ' need an answer'),
+        money('Joint is short', 188.40, mm().jointShort), money('Your half', 94.20, mm().jointHalf),
+        says('Joint page shows the bank balance', 'Joint checking at the bank', pageText('Joint')), pagesDraw()]; } },
+    { t: 'Answer: Wegmans is joint spending, Aldi gets left out', run: function () { A.setJointKind('jb_weg', 'spend'); A.setJointKind('jb_aldi', 'ignore'); },
+      check: function () { var j = A.calc().jointBank; return [
+        money('Debit spending counted', 60, j.spend), yes('Nothing left to answer', j.ask === 0, j.ask + ' still need an answer'),
+        money('Joint is short', 168.40, mm().jointShort)]; } },
+    { t: 'Aldi posts at the bank under a new id', run: function () {
+        A.S.JointBank = A.S.JointBank.filter(function (r) { return r.id !== 'jb_aldi'; });
+        A.S.JointBank.push({ id: 'jb_aldi_posted', date: '2026-10-27', name: 'Aldi', amount: -20, pending: false });
+      }, check: function () { var l = jointLine('jb_aldi_posted'); return [
+        yes('The answer carried over from the pending charge', l.kind === 'ignore' && l.carried, 'kind: ' + (l.kind || 'none')),
+        money('Debit spending counted', 60, A.calc().jointBank.spend)]; } },
+    { t: 'Spectrum was really joint spending', run: function () { A.setJointKind('jb_spec', 'spend'); },
+      check: function () { return [money('Debit spending counted', 155, A.calc().jointBank.spend), money('Joint is short', 263.40, mm().jointShort)]; } },
+    { t: 'Clear out-of-pocket (the joint starts over)', run: function () {
+        var btn = A.document.createElement('button'); btn.dataset.act = 'clearcash'; A.document.body.appendChild(btn); btn.click();
+        A.document.querySelector('#modal [data-m="yes"]').click();
+      }, check: function () { return [
+        yes('Joint spending now counts from today', A.setting('jointSince', '') === A.today(), 'since ' + A.setting('jointSince', '')),
+        money('Debit spending counted', 0, A.calc().jointBank.spend), money('Joint is short', 108.40, mm().jointShort), pagesDraw()]; } }
+  ]
+});
+
 SCENARIOS.push({
   title: 'The preview can\'t save',
   about: 'Pretends to be the preview copy and tries to save, back up and sync. None of it may reach Google.',
@@ -298,6 +352,7 @@ async function runAll() {
   var total = 0, failed = 0, html = '';
   for (var s = 0; s < SCENARIOS.length; s++) {
     var sc = SCENARIOS[s];
+    if (sc.needs && typeof A[sc.needs] !== 'function') { html += '<section><h2>' + esc(sc.title) + '</h2><p>Not in this copy of the app yet, so skipped.</p></section>'; continue; }
     sc.ids = {};
     A.S = JSON.parse(JSON.stringify(sc.data)); A.prep(); A.undoStack.length = 0;
     html += '<section><h2>' + esc(sc.title) + '</h2><p>' + esc(sc.about) + '</p>';
