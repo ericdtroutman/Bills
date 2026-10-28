@@ -1,0 +1,51 @@
+# Read-only check of the Apps Script project: what code Google has, its versions and deployments.
+# Changes nothing. Results show up as notices on the run (ids shortened: this repo is public).
+name: Check script
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/check-script.yml']
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Look at the live project
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        run: |
+          npm install -g @google/clasp@3.4.1 --no-fund --no-audit --loglevel=error
+          umask 077
+          printf '%s' "$CLASPRC_JSON" | tr -d '\r\n' > ~/.clasprc.json
+          short() { printf '…%s' "${1: -6}"; }
+          SID="$(node -e 'console.log(require("./server/.clasp.json").scriptId)')"
+          echo "::notice title=Project::server/.clasp.json points at script $(short "$SID")"
+
+          # what Google has right now (HEAD)
+          mkdir -p /tmp/live && cp server/.clasp.json /tmp/live/ && cd /tmp/live
+          if clasp pull > /tmp/pull.txt 2>&1; then
+            FILES="$(ls -1 | grep -v '^\.clasp' | tr '\n' ' ')"
+            HAS_NEW=no; grep -q "mirrorJoint_" ./*.js ./*.gs 2>/dev/null && HAS_NEW=yes
+            HAS_PC=no; grep -q "passcodeReady" ./*.js ./*.gs 2>/dev/null && HAS_PC=yes
+            echo "::notice title=Code at Google (HEAD)::files: $FILES| has joint checking copy: $HAS_NEW | has passcode check: $HAS_PC"
+          else
+            echo "::error title=Pull failed::$(tr '\n' ' ' < /tmp/pull.txt | cut -c1-300)"
+          fi
+          cd "$GITHUB_WORKSPACE/server"
+
+          # what the repo would push
+          clasp show-file-status --json > /tmp/status.json 2>/tmp/status.err || true
+          echo "::notice title=Files the deploy pushes::$(tr '\n' ' ' < /tmp/status.json | cut -c1-300) $(tr '\n' ' ' < /tmp/status.err | cut -c1-200)"
+
+          clasp list-versions --json > /tmp/versions.json 2>/dev/null || echo '[]' > /tmp/versions.json
+          node -e 'const v=JSON.parse(require("fs").readFileSync("/tmp/versions.json","utf8")); const l=Array.isArray(v)?v:[]; console.log("::notice title=Versions::" + l.length + " versions; newest " + l.slice(-3).map(x=>"v"+x.versionNumber+" "+String(x.description||"").slice(0,40)).join(" | "))'
+
+          clasp list-deployments --json > /tmp/deps.json 2>/dev/null || echo '[]' > /tmp/deps.json
+          node -e 'const d=JSON.parse(require("fs").readFileSync("/tmp/deps.json","utf8")); const l=Array.isArray(d)?d:[]; console.log("::notice title=Deployments::" + l.map(x=>"…"+String(x.deploymentId).slice(-6)+" "+(x.versionNumber?"v"+x.versionNumber:"HEAD")+" "+String(x.description||"").slice(0,40)).join(" | "))'
+          rm -f ~/.clasprc.json
