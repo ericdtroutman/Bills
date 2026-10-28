@@ -322,6 +322,27 @@ SCENARIOS.push({
 });
 
 SCENARIOS.push({
+  title: 'Auto-wrap, payroll and where savings went',
+  about: 'You never tap Wrap up; when the next paycheck after that lands, the old pay period is filed for you, with its savings listed by account.',
+  data: startingData(),
+  steps: [
+    { t: 'Paycheck lands (answered by itself), you move $325 to Ally savings', run: function () {
+        bankLine('ck_pay_new', '2026-10-23', 'Kenmore Town of Payroll Available', 1862.12); bankLine('ck_sav', '2026-10-26', 'Transfer to Savings Account', -325, 'savings');
+        A.S.Checking[A.S.Checking.length - 1].other = 'ally|1'; setBalance(2537.12); A.prep();
+      }, check: function () { var m = mm(); return [
+        yes('Payroll answered as a paycheck by itself', A.find('Checking', 'ck_pay_new').kind === 'pay'),
+        yes('Two pots, nothing filed yet', m.two && A.S.Periods.length === 0),
+        yes('Savings line named by the account', A.xferName(A.find('Checking', 'ck_sav')) === 'To Ally savings')]; } },
+    { t: 'Two weeks later the next paycheck lands, still not wrapped up', run: function () {
+        bankLine('ck_pay_3', '2026-11-06', 'Kenmore Town of Payroll Available', 1862.12, 'pay'); setBalance(4399.24); A.prep();
+      }, check: function () { var m = mm(), p = A.S.Periods[0] || {}, t = {}; try { t = JSON.parse(p.savedTo || '{}'); } catch (e) {} return [
+        yes('The oldest pay period was filed by itself', A.S.Periods.length === 1, A.S.Periods.length + ' filed'),
+        money('History: saved', 325, p.saved), money('History: saved to Ally savings', 325, t['Ally savings']),
+        yes('Now the Oct 23 and Nov 6 pay periods overlap', m.two && m.startPay.id === 'ck_pay_new' && m.newest.id === 'ck_pay_3'), pagesDraw()]; } }
+  ]
+});
+
+SCENARIOS.push({
   title: 'The preview can\'t save',
   about: 'Pretends to be the preview copy and tries to save, back up and sync. None of it may reach Google.',
   data: startingData(),

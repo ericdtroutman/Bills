@@ -1220,7 +1220,8 @@ var KIND_HELP = { ignore: 'Already happened before this pay period. Leave it out
 var GENERIC_NAME = /transfer|xfer|zelle|venmo|cash app|paypal|deposit|withdraw|\bcheck\b|\batm\b|online|mobile|web /i;
 var CARDISH = /payment|epay|e-pay|autopay|amex|american express|chase|card|synchrony|citi|capital one|discover|barclay|crd|pmt/i;
 
-function isPay(r) { return r.amount > 0 && (r.kind === 'pay' || (r.kind === 'real' && /payroll|salary|direct dep/i.test(r.name || ''))); }
+var PAYROLL = /kenmore town of payroll/i;     // the only real paycheck into M&T (Eric, Oct 27)
+function isPay(r) { return r.amount > 0 && (r.kind === 'pay' || (r.kind === 'real' && PAYROLL.test(r.name || ''))); }
 function addDays(d, n) { var x = new Date(d + 'T12:00:00'); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); }
 function daysAgo(n) { return addDays(today(), -n); }
 function setSetting(id, value) { if (!find('Settings', id)) S.Settings.push({ id: id, value: '' }); upsert('Settings', { id: id, value: value }); }
@@ -1281,7 +1282,8 @@ function moneyMath(m) {
   var open = C.filter(function (r) { return !r.period && !linkPending[r.id]; });
   var pays = open.filter(isPay).sort(function (a, b) { return String(a.date).localeCompare(String(b.date)); });
   var startPay = pays.filter(function (r) { return r.id === setting('periodPay', ''); })[0] || pays[0] || null;
-  var newest = pays.length ? pays[pays.length - 1] : null;
+  // the paycheck right after the one being wrapped up (a later one means auto-wrap files the old pot first)
+  var newest = pays.length ? (pays[pays.indexOf(startPay) + 1] || startPay) : null;
   var two = !!(newest && startPay && newest !== startPay);
   var cut = two ? newest.date : '';
   var potOfRow = function (r) {
@@ -1528,7 +1530,7 @@ function questionsHtml(mm) {
       hint = '<div class="q-hint link-hint">Is this ' + what + '? <button class="qbtn on" data-act="cklink" data-id="' + esc(id) + '" data-with="' + esc(withIds) + '">Yes, that’s it</button>' +
         '<button class="qbtn" data-act="cknolink" data-id="' + esc(id) + '">No, something else</button></div>';
     } else if (r.amount > 0) {
-      if (/payroll|salary|direct dep/i.test(r.name)) hint = '<div class="q-hint">Your paycheck? ' + qb(id, 'pay', 'Yes', 'on') + '</div>';
+      if (PAYROLL.test(r.name)) hint = '<div class="q-hint">Your paycheck? ' + qb(id, 'pay', 'Yes', 'on') + '</div>';
     } else {
       var mate = passIn.filter(function (p) { return Math.abs(p.amount - amt) <= 5; })[0];
       var billsPot = mm.two ? mm.P['new'] : mm.P.cur;
@@ -1678,6 +1680,8 @@ function viewMoney(m) {
       '<div style="font-size:20px;font-weight:800">Past pay periods</div></div></div><div class="rows">' + P.map(function (p, i) {
         return '<div class="fline"><div><b>' + (p.startDate ? shortDate(p.startDate) + ' – ' : '') + shortDate(p.endDate) + '</b><div class="sub2">Had ' + money(p.income) +
           ' · cards ' + money(p.cards) + ' · spending ' + money(p.spend) + ' · bills ' + money(p.bills) + (+p.joint ? ' · covered for joint ' + money(p.joint) : '') + '</div></div>' +
+          (function () { var t = {}; try { t = JSON.parse(p.savedTo || '{}'); } catch (e) {} var k = Object.keys(t);
+            return k.length ? '<div class="sub2">Saved to ' + k.map(function (n) { return esc(n) + ' ' + money(t[n]); }).join(' · ') + '</div>' : ''; })() + '</div>' +
           '<div class="num pos-txt">Saved ' + money(p.saved) + '</div><div class="fl-tools">' + (i === 0 ? '<button class="link" data-act="reopen" data-id="' + esc(p.id) + '">Reopen</button>' : '') + '</div></div>';
       }).join('') + '</div></section>';
   }
@@ -1716,7 +1720,13 @@ function wrapPanel(mm, m) {
 }
 
 /* file the old pot into history; the new paycheck's pot becomes the only one */
-function wrapUp() {
+/* where each pay period's savings went, by account (your nicknames): { "Eric's Ally savings": 325 } */
+function savedTo(pot) {
+  var out = {};
+  pot.rows.forEach(function (r) { if (r.kind === 'savings') { var k = (xferName(r) || r.name || 'Savings').replace(/^To /, ''); out[k] = r2((out[k] || 0) + Math.abs(r.amount)); } });
+  return out;
+}
+function wrapUp(auto) {
   var mm = moneyMath(calc()); if (!mm.two) return;
   var pid = uid('pp'), old = mm.P.old, led = mm.ledger.slice();
   undoLabel = 'wrapping up the pay period';
@@ -1727,7 +1737,7 @@ function wrapUp() {
   setSetting('wrapPrev_' + pid, JSON.stringify({ periodPay: setting('periodPay', ''), periodStart: setting('periodStart', '') }));
   upsert('Periods', { id: pid, startDate: start, endDate: addDays(mm.cut, -1), income: r2(old.income),
     cards: r2(sum(paid, function (l) { return l.amount; })), spend: r2(old.spend), bills: r2(old.bills + old.reserve), saved: r2(old.saved), joint: r2(old.joint),
-    byType: JSON.stringify(typeTotals(Object.assign({}, old, { lines: paid }))) });
+    byType: JSON.stringify(typeTotals(Object.assign({}, old, { lines: paid }))), savedTo: JSON.stringify(savedTo(old)) });
   oldRows.forEach(function (r) { upsert('Checking', { id: r.id, period: pid }); });
   // card charges paid by the old pay period's card transfer are filed with it; ones not paid yet carry over
   paid.forEach(function (l) { if (l.src === 'charge') upsert('Charges', { id: l.id, settled: pid + '>' + l.cover }); });
@@ -1742,7 +1752,7 @@ function wrapUp() {
   setSetting('periodPay', mm.newest.id);
   setSetting('periodStart', mm.cut);
   render();
-  toast('Last pay period filed in History. <button class="toast-btn" data-act="undo">Undo</button>', 8000);
+  toast((auto ? 'A newer paycheck came in, so the pay period before it was filed in History for you.' : 'Last pay period filed in History.') + ' <button class="toast-btn" data-act="undo">Undo</button>', 8000);
 }
 function reopen(pid) {
   undoLabel = 'reopening the pay period';
@@ -1866,6 +1876,19 @@ function refreshData(note) {
 function prep() {
   ['Rules', 'CheckPending', 'Checking', 'Periods', 'Pending', 'TypeRules', 'JointBank', 'JointKinds'].forEach(function (t) { if (!S[t]) S[t] = []; });
   try { applyRules(); } catch (e) { console.error(e); }
+  // payroll answers itself
+  try { (S.Checking || []).forEach(function (r) { if (!r.manual && !r.kind && r.amount > 0 && PAYROLL.test(r.name || '')) setKind(r.id, 'pay'); }); } catch (e) { console.error(e); }
+  try { autoWrap(); } catch (e) { console.error(e); }
+}
+/* if a pay period was never wrapped up and another paycheck has already landed after the next one, file it */
+function autoWrap() {
+  if (!checkingAccounts().length) return;
+  for (var n = 0; n < 6; n++) {
+    var mm = moneyMath(calc());
+    if (!mm.two || mm.pays.indexOf(mm.newest) >= mm.pays.length - 1) return;
+    undoLabel = 'filing the pay period automatically';
+    wrapUp(true);
+  }
 }
 function today() { var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
 
