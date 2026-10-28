@@ -499,7 +499,9 @@ function syncBank_() {
         var date = Utilities.formatDate(new Date(whenMs || Date.now()), tz, 'yyyy-MM-dd');
         seen[tkey] = true;
         newImported.push({ id: tkey, date: date, amount: amount, cardId: cardId });
-        if (amount < 0 && /payment|autopay|auto pay|thank you|pymt/i.test(t.description || '')) return;   // paying the card off
+        // paying the card off: look at both the description and the payee (Target's feed names the payee "Target"
+        // and words the payment differently, so a $109.45 payment came in as a refund on Oct 26)
+        if (amount < 0 && /payment|paymt|pymnt|pymt|\bpmt\b|autopay|auto pay|thank you|online transfer|ach credit/i.test((t.description || '') + ' ' + (t.payee || ''))) return;
         if (!amount) return;
         newCharges.push({ id: 'bk_' + Utilities.getUuid().slice(0, 12), cardId: cardId, item: tidyName_(desc),
                           amount: amount, who: '', order: ++order, date: date, bankId: tkey });
