@@ -1238,8 +1238,9 @@ function ledger() {
 function saveLedger(list) { setSetting('cardLedger', JSON.stringify(list)); }
 
 /* ---- the extra paycheck. 26 paychecks pay 24 half-months of bills, so twice a year a check isn't needed for bills.
-   Each paycheck pays the next bill date (the 1st or the 15th). When the next one is a 1st that's still 15+ days away,
-   that check is the extra one and the following check pays the 1st (Eric's rule, Oct 28, 2026).
+   Each paycheck pays the next bill date (the 1st or the 15th). Eric stays at most ~14 days ahead: when the next bill
+   date is 15+ days away, that check is the extra one and the following check pays it, even if a few days late
+   (nothing is actually due on the 1st or 15th; that's just when he pays). Eric's rule, Oct 28, 2026.
    On the extra check you each send half of groceries + Disney + Christmas for the kids + spending money to the joint;
    the rest stays yours. Paydays: KTA 26-pay calendar 2026-27, then every 14 days until the next calendar is added. */
 var PAYDAYS = ['2026-10-23', '2026-11-06', '2026-11-20', '2026-12-04', '2026-12-18', '2026-12-31', '2027-01-15', '2027-01-29',
@@ -1256,7 +1257,7 @@ function payPlan() {
   days.forEach(function (d, i) {
     if (i === 0) { plan.push({ date: d, bill: bill }); return; }
     var b = nextBill(bill);
-    if (b.slice(8) === '01' && dayGap(d, b) >= 15) plan.push({ date: d, extra: true });
+    if (dayGap(d, b) >= 15) plan.push({ date: d, extra: true });
     else { plan.push({ date: d, bill: b }); bill = b; }
   });
   return plan;
