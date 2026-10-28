@@ -29,12 +29,12 @@ var TABLES = {
   History:     ['id', 'cardId', 'item', 'amount', 'who', 'date', 'clearedOn'],
   Pending:     ['id', 'cardId', 'item', 'amount', 'who', 'date', 'bankId', 'hold'],
   JointCash:   ['id', 'item', 'amount', 'date', 'order'],
-  Checking:    ['id', 'date', 'name', 'amount', 'kind', 'pairId', 'period', 'order', 'pot', 'manual', 'note', 'extra', 'credit', 'nolink'],
+  Checking:    ['id', 'date', 'name', 'amount', 'kind', 'pairId', 'period', 'order', 'pot', 'manual', 'note', 'extra', 'credit', 'nolink', 'other'],
   Periods:     ['id', 'startDate', 'endDate', 'income', 'cards', 'spend', 'bills', 'saved', 'byType', 'joint'],
   TypeRules:   ['id', 'type'],
   Rules:       ['id', 'kind'],
   CheckPending: ['id', 'date', 'name', 'amount'],
-  JointBank:   ['id', 'date', 'name', 'amount', 'pending'],      // copy of the joint checking's recent lines, rewritten on every sync
+  JointBank:   ['id', 'date', 'name', 'amount', 'pending', 'other'],   // copy of the joint checking's recent lines, rewritten on every sync
   JointKinds:  ['id', 'kind', 'amount', 'date']                 // your answer for each joint checking line (same id as JointBank)
 };
 var NUMBER_FIELDS = { amount: 1, total: 1, us: 1, budget: 1, order: 1, balance: 1, income: 1, cards: 1, spend: 1, bills: 1, saved: 1,
@@ -42,7 +42,7 @@ var NUMBER_FIELDS = { amount: 1, total: 1, us: 1, budget: 1, order: 1, balance: 
 var BOOL_FIELDS = { paid: 1, hold: 1, manual: 1, nolink: 1, pending: 1 };
 var TEXT_FIELDS = { id: 1, cardId: 1, fundId: 1, personId: 1, item: 1, name: 1, note: 1, who: 1,
                     payOn: 1, color: 1, date: 1, value: 1, status: 1,
-                    url: 1, username: 1, password: 1, bank: 1, bankId: 1, clearedOn: 1, nick: 1, kind: 1, pairId: 1, period: 1, settled: 1, startDate: 1, endDate: 1, byType: 1, type: 1, pot: 1 };
+                    url: 1, username: 1, password: 1, bank: 1, bankId: 1, clearedOn: 1, nick: 1, other: 1, kind: 1, pairId: 1, period: 1, settled: 1, startDate: 1, endDate: 1, byType: 1, type: 1, pot: 1 };
 
 /* ---------------------------------------------------------------- entry points */
 
@@ -440,6 +440,8 @@ function syncBank_() {
     var fromMs = Math.max(startMs, Date.now() - 45 * 864e5);
     var data = sfFetch_('version=2&pending=1&start-date=' + Math.floor(fromMs / 1000));
     saveAccounts_(data);
+    var partners = {};
+    try { partners = transferPartners_(data); } catch (e) { console.error('Transfer matching failed: ' + (e.message || e)); }
 
     var cardFor = {};
     readTable_('BankAccounts').forEach(function (r) { if (r.cardId) cardFor[r.id] = r.cardId; });
@@ -475,7 +477,7 @@ function syncBank_() {
           seen[ck] = true;
           newImported.push({ id: ck, date: cDate, amount: amt, cardId: 'checking' });
           newChecking.push({ id: ck, date: cDate, name: tidyName_(desc), amount: amt,
-                             kind: amt > 0 || looksLikeTransfer ? '' : 'spend', pairId: '', period: '', order: ++order });
+                             kind: amt > 0 || looksLikeTransfer ? '' : 'spend', pairId: '', period: '', order: ++order, other: partners[ck] || '' });
         });
         return;
       }
@@ -522,10 +524,11 @@ function syncBank_() {
     });
     appendRows_('Charges', newCharges);
     appendRows_('Checking', newChecking);
+    try { fillOther_(partners); } catch (e) { console.error('Transfer names failed: ' + (e.message || e)); }
     appendRows_('Imported', newImported);
     rewriteTable_('Pending', pending);
     rewriteTable_('CheckPending', checkPending);
-    try { mirrorJoint_(data, tz); } catch (e) { console.error('Joint checking copy failed: ' + (e.message || e)); }
+    try { mirrorJoint_(data, tz, partners); } catch (e) { console.error('Joint checking copy failed: ' + (e.message || e)); }
     // yes/no only (never the passcode): lets Claude confirm Script Properties is set up before updating the web app
     try { setSetting_('passcodeReady', PASSCODE && PASSCODE !== 'change-me' ? 'yes' : 'no'); } catch (e) {}
     recordErrors_(data, newCharges.length + newChecking.length);
@@ -548,7 +551,8 @@ function jointAccountKey_() {
   return hit ? hit.id : '';
 }
 
-function mirrorJoint_(data, tz) {
+function mirrorJoint_(data, tz, partners) {
+  partners = partners || {};
   var jk = jointAccountKey_();
   if (!jk) return;
   var rows = [];
@@ -559,11 +563,67 @@ function mirrorJoint_(data, tz) {
       if (!amt) return;
       var ms = ((t.transacted_at || t.posted) || 0) * 1000;
       rows.push({ id: 'jb|' + jk + '|' + t.id, date: Utilities.formatDate(new Date(ms || Date.now()), tz, 'yyyy-MM-dd'),
-                  name: tidyName_(t.payee || t.description || ''), amount: amt, pending: !!t.pending });
+                  name: tidyName_(t.payee || t.description || ''), amount: amt, pending: !!t.pending, other: partners[jk + '|' + t.id] || '' });
     });
   });
   rows.sort(function (x, y) { return x.date < y.date ? 1 : x.date > y.date ? -1 : 0; });
   rewriteTable_('JointBank', rows);
+}
+
+/*
+ * Transfers between your own accounts: works out which account each transfer went to or came from, so the app
+ * can show "To Joint savings" (your nickname) instead of the bank's "Transfer to Savings Account".
+ * 1. The description names the other account's last 4 digits ("Transfer from Savings 0763").
+ * 2. Otherwise the same amount shows up the other way round in another linked account within 3 days,
+ *    and at least one side reads like a transfer or payment (so a purchase never gets a name by chance).
+ * Returns { '<account key>|<transaction id>': '<other account key>' } for posted transactions.
+ */
+function transferPartners_(data) {
+  var accts = data.accounts || [], last4 = {}, txns = [], out = {};
+  var XFER = /transfer|xfer|trnsfr|to sav|from sav|savings|online banking|from check|to check|from chk|to chk|payment|pmt|epay|autopay|ally|deposit/i;
+  accts.forEach(function (a) { var m = String(a.name || '').match(/\((\d{4})\)/); if (m) last4[m[1]] = acctKey_(a); });
+  accts.forEach(function (a) {
+    var key = acctKey_(a);
+    (a.transactions || []).forEach(function (t) {
+      if (t.pending) return;
+      var amt = Math.round(parseFloat(t.amount) * 100) / 100;
+      if (!amt) return;
+      var desc = (t.description || '') + ' ' + (t.payee || '');
+      txns.push({ id: key + '|' + t.id, acct: key, amt: amt, ms: ((t.transacted_at || t.posted) || 0) * 1000, desc: desc, xfer: XFER.test(desc) });
+    });
+  });
+  txns.forEach(function (x) {                                   // 1. last 4 digits in the description
+    if (!x.xfer) return;                                        // (a store number never counts)
+    var digits = x.desc.match(/\b\d{4}\b/g) || [];
+    for (var i = 0; i < digits.length; i++) {
+      var other = last4[digits[i]];
+      if (other && other !== x.acct) { out[x.id] = other; return; }
+    }
+  });
+  txns.sort(function (a, b) { return a.ms - b.ms; });
+  var used = {};
+  txns.forEach(function (x) {                                   // 2. the matching other half of the transfer
+    if (used[x.id]) return;
+    var best = null, bestGap = 3 * 864e5 + 1;
+    txns.forEach(function (y) {
+      if (used[y.id] || y.acct === x.acct || Math.abs(y.amt + x.amt) > 0.005 || !(x.xfer || y.xfer)) return;
+      if (out[x.id] && out[x.id] !== y.acct) return;             // the digits already named the other account
+      var gap = Math.abs(y.ms - x.ms);
+      if (gap < bestGap) { best = y; bestGap = gap; }
+    });
+    if (!best) return;
+    used[x.id] = used[best.id] = true;
+    out[x.id] = out[x.id] || best.acct;
+    out[best.id] = out[best.id] || x.acct;
+  });
+  return out;
+}
+
+/** Names the other account on checking lines brought in before this was worked out (only fills blanks). */
+function fillOther_(partners) {
+  readTable_('Checking').forEach(function (r) {
+    if (!r.other && !r.manual && partners[r.id]) upsert_('Checking', { id: r.id, other: partners[r.id] });
+  });
 }
 
 /** Replaces everything in a tab (below the header) with these rows. */
