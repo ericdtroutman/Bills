@@ -165,6 +165,12 @@
   .lf .btn { flex: 0 0 auto; }
   .g-two { grid-template-columns: 1fr 110px 26px; }
   .g-entry { grid-template-columns: 112px 1fr 104px 22px; }
+  .goal { display: flex; gap: 14px; flex-wrap: wrap; padding: 0 20px 10px; font-size: 12px; color: var(--muted); font-weight: 600; }
+  .goal label { display: flex; align-items: center; gap: 4px; }
+  .goal .amt .cell { width: 78px; }
+  .goalbar { margin: 0 20px; height: 8px; border-radius: 99px; background: var(--line); overflow: hidden; }
+  .goalbar i { display: block; height: 100%; background: var(--c, var(--good)); border-radius: 99px; }
+  .goalnote { padding: 6px 20px 10px; font-size: 12px; color: var(--muted); }
   .g-ro { grid-template-columns: 1fr 110px; }
   .r { text-align: right; }
   .cell { width: 100%; border: 0; background: transparent; padding: 7px 8px; margin: 0 -8px; border-radius: 8px; outline: none;
@@ -1038,20 +1044,82 @@ function viewBills(m) {
   return h;
 }
 
+/* ---- savings: real account balances (saved by Bank Sync) and goals on the Specialty Savings funds ---- */
+var svShowOther = false;
+function fundBal(f) { return sum(S.FundEntries.filter(function (e) { return e.fundId === f.id; }), function (e) { return e.amount; }); }
+/* mine / joint / out ('' = not a savings account). Your pick wins; otherwise a guess from the name.
+   The kids' Starter Savings are left out; Ally Spending counts as yours (money on its way to Ally savings). */
+function saveRole(a) {
+  if (a.saveAs) return a.saveAs;
+  if (a.cardId) return '';
+  var n = (a.nick || '') + ' ' + (a.name || '');
+  if (/starter/i.test(n)) return 'out';
+  if (/check/i.test(n) && !/sav/i.test(n)) return '';
+  if (/joint/i.test(n)) return 'joint';
+  if (/sav|ally|specialty/i.test(n)) return 'mine';
+  return '';
+}
+function savingsAccts(role) { return (S.BankAccounts || []).filter(function (a) { return saveRole(a) === role; }); }
+function specialtyAcct() { return savingsAccts('mine').filter(function (a) { return /specialty/i.test((a.nick || '') + ' ' + a.name); })[0] || null; }
+/* the paycheck date n paychecks from now */
+function paycheckAfter(n) { var t = today(); var p = payPlan().filter(function (x) { return x.date > t; }); return p[Math.min(n, p.length) - 1] ? p[Math.min(n, p.length) - 1].date : ''; }
+/* each paycheck's leftover covers the funds' per-paycheck amounts first (in fund order), the rest goes to Ally */
+function fundSplit(toSave) {
+  var left = r2(toSave), out = [];
+  S.Funds.slice().sort(byOrder).forEach(function (f) {
+    var per = +f.perCheck || 0, tgt = +f.target || 0; if (per <= 0 || left <= 0.009) return;
+    var need = tgt > 0 ? Math.max(0, tgt - fundBal(f)) : per;
+    var a = r2(Math.min(per, need, left)); if (a <= 0.009) return;
+    out.push({ fund: f, amount: a }); left = r2(left - a);
+  });
+  return { funds: out, toFunds: r2(toSave - left), rest: left };
+}
 function viewSavings() {
   var funds = S.Funds.slice().sort(byOrder);
   var total = sum(S.FundEntries, function (e) { return e.amount; });
-  var h = '<h1>Specialty Savings</h1><p class="sub">Add money in or take money out of each fund.</p>';
-  h += '<div class="tiles">' + tile('Total in savings', total);
-  funds.slice(0, 3).forEach(function (f) {
-    h += tile(f.name, sum(S.FundEntries.filter(function (e) { return e.fundId === f.id; }), function (e) { return e.amount; }));
-  });
-  h += '</div><div class="grid">';
+  var mine = savingsAccts('mine'), joint = savingsAccts('joint');
+  var mineT = sum(mine, function (a) { return a.balance; }), jointT = sum(joint, function (a) { return a.balance; });
+  var sync = String(setting('lastSync', '') || '').slice(0, 10);
+  var h = '<h1>Savings</h1><p class="sub">Your savings accounts from Bank Sync' + (sync ? ' (balances as of ' + shortDate(sync) + ')' : '') + ', and the funds inside Specialty Savings.</p>';
+  h += '<div class="tiles">' + tile('My savings', mineT) + tile('Joint savings', jointT) + tile('In Specialty funds', total) + '</div>';
+
+  var acctRow = function (a) {
+    var r = saveRole(a);
+    return '<div class="fline"><div><b>' + esc(acctLabel(a)) + '</b><div class="sub2">' + (a.nick ? esc(a.name) + ' · ' : '') + esc(a.bank) + '</div></div>' +
+      '<div class="num">' + money(a.balance) + '</div><div class="fl-tools"><select data-t="BankAccounts" data-id="' + esc(a.id) + '" data-f="saveAs">' +
+      [['mine', 'Mine'], ['joint', 'Joint'], ['out', 'Leave out']].map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === r ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') +
+      (r ? '' : '<option value="" selected>Not savings</option>') + '</select></div></div>';
+  };
+  var other = (S.BankAccounts || []).filter(function (a) { var r = saveRole(a); return !a.cardId && (r === '' || r === 'out'); });
+  h += '<section class="panel" style="--c:#2B8A3E;margin-bottom:16px"><div class="phead"><div class="grow"><div class="eyebrow">Accounts</div>' +
+    '<div style="font-size:20px;font-weight:800">Where the savings are</div></div></div><div class="rows">' +
+    (mine.length ? '<div class="fline top"><div><b>Mine</b></div><div class="num">' + money(mineT) + '</div><div></div></div>' + mine.map(acctRow).join('') : '') +
+    (joint.length ? '<div class="fline top"><div><b>Joint</b></div><div class="num">' + money(jointT) + '</div><div></div></div>' + joint.map(acctRow).join('') : '') +
+    (!mine.length && !joint.length ? '<div class="empty">No savings accounts yet. Link them in Bank Sync and leave them on “Don’t import”.</div>' : '') +
+    (svShowOther ? other.map(acctRow).join('') : '') + '</div>' +
+    '<div class="pfoot"><button class="link" data-act="svother">' + (svShowOther ? 'Hide' : 'Show') + ' left-out accounts (' + other.length + ')</button><span style="font-size:12px;color:var(--muted)">Change Mine / Joint if a guess is wrong</span></div></section>';
+
+  var sp = specialtyAcct();
+  if (sp) {
+    var diff = r2(sp.balance - total);
+    h += '<p class="sub">Specialty Savings: bank says <b>' + money(sp.balance) + '</b>, funds add up to <b>' + money(total) + '</b>. ' +
+      (Math.abs(diff) < 1 ? 'They match.' : diff > 0 ? '<b>' + money(diff) + '</b> isn’t in any fund yet.' : 'The funds are <b>' + money(-diff) + '</b> more than the bank; something came out that isn’t logged.') + '</p>';
+  }
+
+  h += '<div class="grid">';
   funds.forEach(function (f) {
     var es = S.FundEntries.filter(function (e) { return e.fundId === f.id; }).sort(byOrder).reverse();
     var bal = sum(es, function (e) { return e.amount; });
+    var tgt = +f.target || 0, per = +f.perCheck || 0;
     h += '<section class="panel" style="--c:' + col(f.color) + '"><div class="phead"><div class="grow"><div class="eyebrow">Fund</div>' +
       textCell('Funds', f.id, 'name', f.name, '', 'title-in') + '</div><div class="big num">' + money(bal) + '</div></div>';
+    h += '<div class="goal"><label>Goal ' + amtCell('Funds', f.id, 'target', tgt) + '</label><label>Per paycheck ' + amtCell('Funds', f.id, 'perCheck', per) + '</label></div>';
+    if (tgt > 0) {
+      var pct = Math.max(0, Math.min(100, bal / tgt * 100)), togo = r2(tgt - bal);
+      var n = per > 0 && togo > 0 ? Math.ceil(togo / per) : 0, by = n ? paycheckAfter(n) : '';
+      h += '<div class="goalbar"><i style="width:' + pct.toFixed(1) + '%"></i></div><div class="goalnote">' +
+        (togo <= 0.009 ? 'Goal reached.' : money(togo) + ' to go' + (n ? ' · about ' + n + ' paycheck' + (n === 1 ? '' : 's') + (by ? ' (' + shortDate(by) + ')' : '') : ' · set a per-paycheck amount to see when')) + '</div>';
+    }
     h += '<form class="addrow" data-form="entry" data-fund="' + f.id + '">' +
       '<input class="f-date" type="date" name="date" value="' + today() + '">' +
       '<input class="f-amt num" name="amount" placeholder="0.00" inputmode="decimal" autocomplete="off">' +
@@ -1065,6 +1133,7 @@ function viewSavings() {
     h += '<div class="pfoot"><span></span><button class="link danger" data-act="delfund" data-id="' + f.id + '">Delete fund</button></div></section>';
   });
   h += '<section class="panel"><div class="empty"><button class="btn" data-act="addfund">+ Add a fund</button></div></section></div>';
+  h += '<p class="sub" style="margin-top:14px">Per paycheck: what to set aside from each pay period’s leftover. The wrap-up checklist covers these first and sends the rest to Ally. Leave it at $0 for funds the bills already pay into (like Disney).</p>';
   return h;
 }
 
@@ -1737,6 +1806,13 @@ function viewMoney(m) {
   return h;
 }
 
+/* the savings step: funds with a per-paycheck amount first (to Specialty Savings), the rest to Ally */
+function saveStep(toSave) {
+  var spl = fundSplit(toSave);
+  if (!spl.funds.length) return 'Move <b>' + money(toSave) + '</b> to M&amp;T savings or Ally';
+  return 'Move <b>' + money(toSave) + '</b> to savings: <b>' + money(spl.toFunds) + '</b> to Specialty Savings (' +
+    spl.funds.map(function (x) { return esc(x.fund.name) + ' ' + money(x.amount); }).join(', ') + ')' + (spl.rest > 0.009 ? ', <b>' + money(spl.rest) + '</b> to Ally' : '');
+}
 function wrapPanel(mm, m) {
   var old = mm.P.old;
   var owedOld = sum(old.lines.filter(function (l) { return !l.cover; }), function (l) { return l.amount; });
@@ -1753,8 +1829,11 @@ function wrapPanel(mm, m) {
     { ok: cardsOk, text: cardsOk ? (sentAmt ? 'Sent ' + money(sentAmt) + ' to the joint for the cards' + (extraDone ? ', including ' + money(old.joint) + ' to cover the joint' : '') : 'Nothing owed on the cards')
         : 'Send <b>' + money(owedOld + suggest) + '</b> to the joint: your card share ' + money(owedOld) + (suggest ? ' + ' + money(suggest) + ', your half of the ' + money(mm.jointShort) + ' the joint is short' : '') +
           '. <span class="sub2">Tap + Add when you send it, or answer it when the bank shows it.</span>' },
-    { ok: savedOk, text: savedOk ? 'Moved ' + money(old.saved) + ' to savings' : toSave > 0.5 ? 'Move <b>' + money(toSave) + '</b> to M&amp;T savings or Ally' + (old.saved ? ' (moved ' + money(old.saved) + ' so far)' : '') : 'Nothing left to move to savings' }
+    { ok: savedOk, text: savedOk ? 'Moved ' + money(old.saved) + ' to savings' : toSave > 0.5 ? saveStep(toSave) + (old.saved ? ' (moved ' + money(old.saved) + ' so far)' : '') : 'Nothing left to move to savings' }
   ];
+  var spl = toSave > 0.5 ? fundSplit(toSave) : null, logged = setting('fundsLogged', '') === (mm.cut || '');
+  if (spl && spl.funds.length) steps.push({ ok: logged, text: logged ? 'Logged in the Specialty funds' :
+    'Log ' + money(spl.toFunds) + ' in the Specialty funds once it’s moved <button class="link" data-act="logfunds" data-v="' + spl.toFunds + '">Log it</button>' });
   var info = [];
   var nb = mm.P['new'];
   info.push(nb.hasBills ? 'Bills for this pay period sent: ' + money(nb.bills) : (nb.extra ? extraLine() : 'Bills for this pay period: ' + money(mm.billsAmt)) + ' set aside until you send it');
@@ -2064,6 +2143,13 @@ document.addEventListener('click', function (e) {
     upsert('Checking', { id: id, kind: 'pass', pairId: pw }); upsert('Checking', { id: pw, pairId: id }); render();
   }
   else if (a === 'mmdeps') { mmShowDeposits = !mmShowDeposits; render(); }
+  else if (a === 'svother') { svShowOther = !svShowOther; render(); }
+  else if (a === 'logfunds') {
+    var mmL = moneyMath(calc()), spl = fundSplit(+b.dataset.v || 0);
+    undoLabel = 'logging savings in the funds';
+    spl.funds.forEach(function (x) { upsert('FundEntries', { id: uid('fe'), fundId: x.fund.id, date: today(), note: 'From pay period', amount: x.amount, order: nextOrder(S.FundEntries) }); });
+    setSetting('fundsLogged', mmL.cut || today()); render();
+  }
   else if (a === 'jkset') { setJointKind(id, b.dataset.k); }
   else if (a === 'jointtoggle') { jointOpen = !jointOpen; store('jointOpen', jointOpen ? '1' : '0'); render(); }
   else if (a === 'clearcash') {
@@ -2211,7 +2297,7 @@ document.addEventListener('change', function (e) {
   }
   var el = e.target; if (!el.dataset || !el.dataset.t || !el.dataset.id) return;
   var t = el.dataset.t, f = el.dataset.f, id = el.dataset.id, v = el.value;
-  if (f === 'amount' || f === 'total' || f === 'us' || f === 'budget' || (t === 'Settings' && id === 'christmasBudget')) {
+  if (f === 'amount' || f === 'total' || f === 'us' || f === 'budget' || f === 'target' || f === 'perCheck' || (t === 'Settings' && id === 'christmasBudget')) {
     var n = parseAmt(v);
     if (n === null) { render(); return; }
     v = t === 'Settings' ? String(n) : n;

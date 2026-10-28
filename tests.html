@@ -360,6 +360,26 @@ SCENARIOS.push({
 });
 
 SCENARIOS.push({
+  title: 'Savings goals split the leftover',
+  about: 'Funds with a per-paycheck amount get covered first (capped at what the goal still needs); the rest goes to Ally.',
+  needs: 'fundSplit',
+  data: (function () { var d = startingData();
+    d.Funds = [{ id: 'f_gsa', name: 'GSA', color: 'green', order: 1, target: 1000, perCheck: 50 }, { id: 'f_trip', name: 'Trip', color: 'gold', order: 2, target: 400, perCheck: 100 },
+               { id: 'f_dis', name: 'Disney', color: 'violet', order: 3, target: '', perCheck: '' }];
+    d.FundEntries = [{ id: 'fe1', fundId: 'f_gsa', date: '2026-10-01', note: '', amount: 400, order: 1 }, { id: 'fe2', fundId: 'f_trip', date: '2026-10-01', note: '', amount: 370, order: 2 }];
+    return d; })(),
+  steps: [
+    { t: '$325 left at wrap-up', run: function () {}, check: function () { var x = A.fundSplit(325); return [
+        money('GSA gets its per-paycheck amount', 50, x.funds[0] && x.funds[0].amount),
+        money('Trip only gets what its goal still needs', 30, x.funds[1] && x.funds[1].amount),
+        yes('Disney (no per-paycheck amount) is skipped', x.funds.length === 2),
+        money('The rest goes to Ally', 245, x.rest)]; } },
+    { t: 'Only $40 left', run: function () {}, check: function () { var x = A.fundSplit(40); return [
+        money('GSA gets all of it', 40, x.toFunds), money('Nothing left for Ally', 0, x.rest)]; } }
+  ]
+});
+
+SCENARIOS.push({
   title: 'The preview can\'t save',
   about: 'Pretends to be the preview copy and tries to save, back up and sync. None of it may reach Google.',
   data: startingData(),
