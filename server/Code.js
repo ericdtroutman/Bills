@@ -65,6 +65,7 @@ function doPost(e) {
     else if (req.fn === 'apply') { apply_(req.ops); out = { ok: true }; }
     else if (req.fn === 'backup') out = { ok: true, data: backupNow() };
     else if (req.fn === 'getHistory') out = { ok: true, data: readTable_('History') };
+    else if (req.fn === 'getOldChecking') out = { ok: true, data: oldChecking_() };
     else if (req.fn === 'bankConnect') out = { ok: true, data: bankConnect_(req.token) };
     else if (req.fn === 'bankSync') out = { ok: true, data: syncBank_() };
     else if (req.fn === 'bankDisconnect') out = { ok: true, data: bankDisconnect_() };
@@ -108,7 +109,19 @@ function getData_() {
   ensureSetup_();
   var out = {};
   Object.keys(TABLES).forEach(function (name) { if (name !== 'Imported' && name !== 'History') out[name] = readTable_(name); });
+  // checking lines filed with older pay periods stay in the Sheet but aren't sent on every open (search asks for them)
+  var keep = checkingKeep_(out.Periods);
+  out.Checking = out.Checking.filter(function (r) { return !r.period || r.period === keep; });
   return out;
+}
+/** The newest filed pay period: its lines stay loaded so Reopen works. */
+function checkingKeep_(periods) {
+  var p = (periods || []).slice().sort(function (a, b) { return String(b.endDate).localeCompare(String(a.endDate)); })[0];
+  return p ? p.id : '';
+}
+function oldChecking_() {
+  var k = checkingKeep_(readTable_('Periods'));
+  return readTable_('Checking').filter(function (r) { return r.period && r.period !== k; });
 }
 
 /**
