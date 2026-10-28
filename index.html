@@ -452,7 +452,7 @@ var selCard = remember('card');
 var lastWho = 'Joint';
 var billSide = remember('side') || '1st';
 var focusAfter = null;              // selector to focus after the next render
-var query = '', prevView = null, pastCharges = null, historyLoading = false;
+var query = '', prevView = null, pastCharges = null, pastChecking = null, historyLoading = false;
 var openLogin = {};
 var openNote = {};
                   // bills whose empty note box is open                 // which bills/cards have their login section open
@@ -1125,7 +1125,7 @@ function viewSearch() {
     .concat((S.JointCash || []).map(function (j) { var c = clone(j); c.cardId = 'cash'; c.who = 'Joint'; c.isCash = true; return c; }))
     .filter(function (x) { return matches(x, q); })
     .sort(function (a, b) { return String(b.date || '').localeCompare(String(a.date || '')) || (b.order - a.order); });
-  var ckHits = (S.Checking || []).filter(function (r) { return matches({ item: r.name, amount: Math.abs(r.amount) }, q); });
+  var ckHits = (S.Checking || []).concat(pastChecking || []).filter(function (r) { return matches({ item: r.name, amount: Math.abs(r.amount) }, q); });
   var past = (pastCharges || []).filter(function (x) { return matches(x, q); })
     .sort(function (a, b) { return String(b.clearedOn).localeCompare(String(a.clearedOn)); });
   var h = '<h1>Search</h1><p class="sub">Searching every card for “' + esc(q) + '”. Type a store name or an amount like 85.39.</p>';
@@ -1170,6 +1170,7 @@ function viewSearch() {
 function loadHistory() {
   if (pastCharges !== null || historyLoading) return;
   historyLoading = true;
+  api('getOldChecking').then(function (rows) { pastChecking = rows || []; if (view === 'search') render(); }, function () {});
   api('getHistory').then(function (rows) { pastCharges = rows || []; historyLoading = false; if (view === 'search') render(); },
     function () { pastCharges = []; historyLoading = false; if (view === 'search') render(); });
 }
@@ -1235,7 +1236,16 @@ function ledger() {
   var old = []; try { old = JSON.parse(setting('closedPending', '') || '[]'); } catch (e) {}
   return old.map(function (p, i) { return { id: 'lg_old' + i, src: 'pending', cardId: p.cardId, bankId: p.bankId || '', full: +p.amount, mine: +p.amount, item: '', date: p.on || '', cover: '', pid: 'old', on: p.on || '' }; });
 }
-function saveLedger(list) { setSetting('cardLedger', JSON.stringify(list)); }
+function saveLedger(list) {
+  var json = JSON.stringify(list);
+  // a Sheet cell holds 50,000 characters: drop the oldest filed entries (only kept to spot repeats) if it ever gets close
+  while (json.length > 40000) {
+    var filed = list.filter(function (e) { return e.pid; }).sort(function (a, b) { return String(a.on || a.date).localeCompare(String(b.on || b.date)); });
+    if (!filed.length) break;
+    list = list.filter(function (e) { return e !== filed[0]; }); json = JSON.stringify(list);
+  }
+  setSetting('cardLedger', json);
+}
 
 /* ---- the extra paycheck. 26 paychecks pay 24 half-months of bills, so twice a year a check isn't needed for bills.
    Each paycheck pays the next bill date (the 1st or the 15th). Eric stays at most ~14 days ahead: when the next bill
@@ -1785,7 +1795,7 @@ function wrapUp(auto) {
     var e = led.filter(function (x) { return x.id === mm.dupeOf[cid]; })[0];
     if (e && e.pid) upsert('Charges', { id: cid, settled: e.pid + '>' });
   });
-  led = led.filter(function (e) { return !e.pid || (e.on || e.date || '9999') >= daysAgo(90); });
+  led = led.filter(function (e) { return !e.pid || (e.on || e.date || '9999') >= daysAgo(30); });
   saveLedger(led);
   mm.P['new'].rows.forEach(function (r) { if (r.pot) upsert('Checking', { id: r.id, pot: '' }); });
   setSetting('periodPay', mm.newest.id);
