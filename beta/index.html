@@ -464,7 +464,7 @@ var CONN = { url: remember('url'), key: remember('key') };
    New features are built there first; they move to the real page only once Eric has tried them. */
 var PREVIEW = /\/beta\/(index\.html)?$/.test(location.pathname);
 var PREVIEW_READS = { getData: 1, getHistory: 1, ping: 1 };
-var PREVIEW_NEW = ['Joint page: answer joint checking lines; debit spending comes off Left'];      // what's being tried in the preview right now, one short line each
+var PREVIEW_NEW = [];      // what's being tried in the preview right now, one short line each
 function previewBanner() {
   if (!PREVIEW) return;
   document.title = 'Bills · Preview';
@@ -930,17 +930,25 @@ function jointKindSelect(l) {
   return '<select class="mini-sel" style="max-width:180px" data-jk="' + esc(l.id) + '" title="What is this?">' +
     opts.map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === (l.answered ? l.kind : '') ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('') + '</select>';
 }
+var jointOpen = remember('jointOpen') === '1';      // the list of joint checking lines starts folded away; this device remembers
 function jointBankPanel(jm) {
   var acct = jointAcct();
   if (!acct) return '';
   jm = jm || jointMath();
-  var h = '<section class="panel fudget" style="--c:#FAB005;margin-bottom:16px"><div class="phead"><div class="grow"><div class="eyebrow">New · preview</div>' +
+  var h = '<section class="panel fudget" style="--c:#FAB005;margin-bottom:16px"><div class="phead"><div class="grow"><div class="eyebrow">Joint checking</div>' +
     '<div style="font-size:20px;font-weight:800">Joint checking at the bank</div><div class="sub2">' + esc(acct.name) + ' · M&amp;T balance' +
     (jm.pending ? ' · ' + money(jm.pending) + ' pending' : '') + '</div></div>' +
     '<div class="big num">' + money(acct.balance) + '<small>at the bank</small></div></div>';
   h += '<div class="fline top"><div><b>Debit spending from the joint</b><div class="sub2">Counts against Left, like out-of-pocket. Not-answered lines count until you say otherwise.</div></div>' +
     '<div class="num neg-out">− ' + money(jm.spend) + '</div><div class="fl-tools"><span class="sub2" style="margin:0">Since</span>' +
     '<input class="datein" style="width:auto;padding:4px 8px" type="date" data-t="Settings" data-id="jointSince" data-f="value" value="' + esc(jm.since) + '" title="Joint spending counts from this date. Clearing out-of-pocket moves it to that day."></div></div>';
+  var nOut = jm.lines.filter(function (l) { return l.row.amount < 0 && l.counted; }).length;
+  var toggle = '<button class="btn small" data-act="jointtoggle">' + (jointOpen ? 'Hide the bank lines' : 'Show the ' + jm.lines.length + ' bank line' + (jm.lines.length === 1 ? '' : 's') + ' and answers') + '</button>';
+  if (!jointOpen) {
+    return h + '<div class="pfoot"><span style="font-size:12px;color:' + (jm.ask ? '#8F5B00;font-weight:700' : 'var(--muted)') + '">' +
+      (jm.ask ? jm.ask + ' line' + (jm.ask === 1 ? ' needs' : 's need') + ' an answer (counted as spending until then)' : nOut ? 'Every money-out line is answered or guessed.' : 'Nothing to answer.') +
+      '</span>' + toggle + '</div></section>';
+  }
   h += '<div class="rows">';
   h += jm.lines.length ? jm.lines.map(function (l) {
     var r = l.row, chips = '';
@@ -962,7 +970,7 @@ function jointBankPanel(jm) {
       '<div class="num ' + (r.amount > 0 ? 'pos-txt' : l.spend ? 'neg-out' : '') + '">' + (r.amount > 0 ? '+ ' : '− ') + money(Math.abs(r.amount)) + '</div>' +
       '<div class="fl-tools">' + tools + '</div></div>';
   }).join('') : '<div class="empty">No lines yet. They come in with the daily bank sync.</div>';
-  h += '</div><div class="pfoot"><span style="font-size:12px;color:var(--muted)">The bank balance also holds bill and card money, so it won’t match Left. Answers are kept by the bank line, so they stay put when the bank list refreshes.</span></div></section>';
+  h += '</div><div class="pfoot"><span style="font-size:12px;color:var(--muted)">The bank balance also holds bill and card money, so it won’t match Left. Answers are kept by the bank line, so they stay put when the bank list refreshes.</span>' + toggle + '</div></section>';
   return h;
 }
 
@@ -1976,6 +1984,7 @@ document.addEventListener('click', function (e) {
   }
   else if (a === 'mmdeps') { mmShowDeposits = !mmShowDeposits; render(); }
   else if (a === 'jkset') { setJointKind(id, b.dataset.k); }
+  else if (a === 'jointtoggle') { jointOpen = !jointOpen; store('jointOpen', jointOpen ? '1' : '0'); render(); }
   else if (a === 'clearcash') {
     var cl = (S.JointCash || []).slice();
     confirmBox('Clear out-of-pocket?', 'This takes the ' + cl.length + ' out-of-pocket item' + (cl.length === 1 ? '' : 's') + ' off the joint. Search can still find them.' + (jointAcct() ? ' Debit spending from joint checking starts counting again from today.' : ''), 'Clear', function () {
