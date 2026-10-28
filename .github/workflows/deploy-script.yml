@@ -78,7 +78,18 @@ jobs:
             echo "::error::The code uploaded but the web app wasn't updated. Check that DEPLOYMENT_ID is the web app link or its AKfy... id (Deploy > Manage deployments)."
             exit 1
           fi
-          clasp list-deployments --json > /tmp/after.json 2>/dev/null || echo '[]' > /tmp/after.json
+          # Google's deployment list can lag a few seconds behind the redeploy, so look again a few times
+          # before deciding the version didn't move (on Oct 28 it reported "stayed on v21" while v22 was live).
+          for try in 1 2 3 4 5 6; do
+            clasp list-deployments --json > /tmp/after.json 2>/dev/null || echo '[]' > /tmp/after.json
+            if DEP="$DEP" node -e '
+              const fs = require("fs"), rd = f => { const d = JSON.parse(fs.readFileSync(f, "utf8")); return Array.isArray(d) ? d : (d.deployments || []); };
+              const id = process.env.DEP, b = rd("/tmp/before.json").find(x => x.deploymentId === id), a = rd("/tmp/after.json").find(x => x.deploymentId === id);
+              process.exit(a && (!b || a.versionNumber !== b.versionNumber) ? 0 : 1);
+            '; then break; fi
+            echo "Waiting for Google to show the new version ($try)..."
+            sleep 10
+          done
           # Prove the web app really moved to the new version; a quiet failure here once left it on old code.
           # Ids are shortened to their last 6 characters in anything printed: this repo is public.
           DEP="$DEP" node -e '
