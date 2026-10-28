@@ -2053,9 +2053,27 @@ var KTA_MS_2026 = [48107, 49406, 52072, 54813, 57505, 60198, 62896, 66229, 69599
   97662, 100670, 103585, 107623, 109881];   // 2026–27 Salary Schedule 01, MS column, steps 1–21
 var LR_DEFAULT = { birth: '', svc: '', svcAsOf: '2026-06-30', step: 11, b403: '', per403: 20, b457: '', per457: 0, ss: '', age: 58,
   saveTarget: '', efTarget: 6.5,
-  kids: [{ name: 'Giovanna', birth: '', bal: '', monthly: 40, goal: '' }, { name: 'Matteo', birth: '', bal: '', monthly: 0, goal: '' }] };
+  kids: [{ name: 'Giovanna', birth: '', bal: '', monthly: '', goal: '' }, { name: 'Matteo', birth: '', bal: '', monthly: 0, goal: '' }] };
 function lrGet() { var v = {}; try { v = JSON.parse(setting('longRange', '') || '{}'); } catch (e) {} return Object.assign(JSON.parse(JSON.stringify(LR_DEFAULT)), v); }
 function lrSet(v) { setSetting('longRange', JSON.stringify(v)); }
+/* a kid's monthly 529 money from Monthly Bills (e.g. "Giovanna 529" on the 1st and the 15th) */
+function kid529(name) { return sum((S.Bills || []).filter(function (b) { return /529/.test(b.name) && new RegExp(name, 'i').test(b.name); }), function (b) { return b.us; }); }
+function kidMonthly(k) { return k.monthly !== '' && k.monthly != null ? +k.monthly : kid529(k.name); }
+/* one-tap fill: a link ending in #lr=birth:1993-01-01;svc:10;0.birth:2016-01-01 saves those values once, then the link's
+   values are wiped from the address bar. Personal numbers travel in the link Claude sends in chat, never in this public code. */
+function lrImportHash() {
+  var m = /^#lr=(.+)$/.exec(location.hash || ''); if (!m) return;
+  try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+  var lr = lrGet(), n = 0;
+  decodeURIComponent(m[1]).split(';').forEach(function (pair) {
+    var i = pair.indexOf(':'); if (i < 1) return;
+    var k = pair.slice(0, i), v = pair.slice(i + 1), kid = /^(\d)\.(\w+)$/.exec(k);
+    v = /^\d{4}-\d\d-\d\d$/.test(v) || parseAmt(v) === null ? v : parseAmt(v);
+    if (kid) { if (lr.kids[+kid[1]] && kid[2] in LR_DEFAULT.kids[0]) { lr.kids[+kid[1]][kid[2]] = v; n++; } }
+    else if (k in LR_DEFAULT && k !== 'kids') { lr[k] = v; n++; }
+  });
+  if (n) { lrSet(lr); view = 'long'; store('view', view); toast('Long range: filled in ' + n + ' number' + (n === 1 ? '' : 's')); }
+}
 function yearsBetween(a, b) { return (new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / (365.25 * 864e5); }
 function addYears(d, n) { var x = new Date(d + 'T12:00:00'); x.setFullYear(x.getFullYear() + Math.floor(n)); x.setDate(x.getDate() + Math.round((n % 1) * 365.25)); return x.toISOString().slice(0, 10); }
 /* salary for the school year starting in September of sy, in today's dollars */
@@ -2156,14 +2174,14 @@ function viewLong() {
   /* 4. the kids' 529s */
   b = (lr.kids || []).map(function (k, i) {
     var age = k.birth ? yearsBetween(k.birth, today()) : null, left = age != null ? Math.max(0, 18 - age) : null;
-    var at18 = left != null ? grow(+k.bal || 0, (+k.monthly || 0) * 12, 0.05, left) : null, goal = +k.goal || 0, need = '';
+    var mo = kidMonthly(k), at18 = left != null ? grow(+k.bal || 0, mo * 12, 0.05, left) : null, goal = +k.goal || 0, need = '';
     if (goal && left > 0 && at18 < goal) {
       var rr = Math.pow(1.05, 1 / 26) - 1, nn = left * 26, fv0 = (+k.bal || 0) * Math.pow(1.05, left);
-      var already = grow(0, (+k.monthly || 0) * 12, 0.05, left), per = (goal - fv0 - already) * rr / (Math.pow(1 + rr, nn) - 1);
+      var already = grow(0, mo * 12, 0.05, left), per = (goal - fv0 - already) * rr / (Math.pow(1 + rr, nn) - 1);
       need = 'Add about <b>' + money(per) + '</b> a paycheck to reach ' + money(goal) + '.';
     } else if (goal && at18 >= goal) need = 'On track for ' + money(goal) + '.';
     return '<div class="lr-kid"><div class="lr-row"><b style="min-width:80px">' + esc(k.name) + '</b>' + lrIn('birth', k.birth, '', { label: 'Birth date', type: 'date', kid: i }) +
-      lrIn('bal', k.bal, '0.00', { label: '529 $', num: 1, kid: i }) + lrIn('monthly', k.monthly, '0', { label: 'Per month $', num: 1, kid: i }) + lrIn('goal', k.goal, '0', { label: 'Goal $', num: 1, kid: i }) + '</div>' +
+      lrIn('bal', k.bal, '0.00', { label: '529 $', num: 1, kid: i }) + lrIn('monthly', k.monthly, kid529(k.name) ? plain(kid529(k.name)) : '0', { label: (k.monthly === '' && kid529(k.name) ? 'Per month (from Bills) $' : 'Per month $'), num: 1, kid: i }) + lrIn('goal', k.goal, '0', { label: 'Goal $', num: 1, kid: i }) + '</div>' +
       (left != null ? '<div class="sub2">' + (left > 0 ? left.toFixed(1) + ' years until 18 · about <b>' + money(at18) + '</b> by then at 5%. ' : 'Turned 18. ') + need + '</div>' : '') + '</div>';
   }).join('');
   h += lrPanel('College funds', 'NY 529', b, '#D6336C');
@@ -2640,7 +2658,7 @@ function load() {
     return api('getData');
   }).then(function (data) {
     store('url', CONN.url); store('key', CONN.key);   // remember only once they work
-    S = data; prep(); status(PREVIEW ? 'Preview: nothing saves' : 'All changes saved'); render();
+    S = data; prep(); lrImportHash(); status(PREVIEW ? 'Preview: nothing saves' : 'All changes saved'); render();
   }, function (err) {
     queue = pending.concat(queue);
     if (authProblem(err)) { showConnect(cleanMsg(err.message)); return; }
