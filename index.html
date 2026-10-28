@@ -1237,6 +1237,41 @@ function ledger() {
 }
 function saveLedger(list) { setSetting('cardLedger', JSON.stringify(list)); }
 
+/* ---- the extra paycheck. 26 paychecks pay 24 half-months of bills, so twice a year a check isn't needed for bills.
+   Each paycheck pays the next bill date (the 1st or the 15th). When the next one is a 1st that's still 15+ days away,
+   that check is the extra one and the following check pays the 1st (Eric's rule, Oct 28, 2026).
+   On the extra check you each send half of groceries + Disney + Christmas for the kids + spending money to the joint;
+   the rest stays yours. Paydays: KTA 26-pay calendar 2026-27, then every 14 days until the next calendar is added. */
+var PAYDAYS = ['2026-10-23', '2026-11-06', '2026-11-20', '2026-12-04', '2026-12-18', '2026-12-31', '2027-01-15', '2027-01-29',
+  '2027-02-12', '2027-02-26', '2027-03-12', '2027-03-25', '2027-04-09', '2027-04-23', '2027-05-07', '2027-05-21', '2027-06-04',
+  '2027-06-17', '2027-07-09'];
+var PAY_ANCHOR = { pay: '2026-10-23', bill: '2026-11-01' };      // the Oct 23 check paid the Nov 1 bills
+var EXTRA_CHRISTMAS = 700;                                     // set aside for the kids' Christmas on the extra check
+function dayGap(a, b) { return Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 864e5); }
+function payPlan() {
+  var days = PAYDAYS.slice();
+  while (days.length < 60) days.push(addDays(days[days.length - 1], 14));
+  var plan = [], bill = PAY_ANCHOR.bill;
+  var nextBill = function (b) { var d = new Date(b + 'T12:00:00'); if (d.getDate() === 1) { d.setDate(15); } else { d.setMonth(d.getMonth() + 1); d.setDate(1); } return d.toISOString().slice(0, 10); };
+  days.forEach(function (d, i) {
+    if (i === 0) { plan.push({ date: d, bill: bill }); return; }
+    var b = nextBill(bill);
+    if (b.slice(8) === '01' && dayGap(d, b) >= 15) plan.push({ date: d, extra: true });
+    else { plan.push({ date: d, bill: b }); bill = b; }
+  });
+  return plan;
+}
+function planFor(date) { return payPlan().filter(function (p) { return Math.abs(dayGap(p.date, date)) <= 3; })[0] || null; }
+function extraCheck() {
+  var find = function (n) { var b = (S.Bills || []).filter(function (x) { return x.payOn === '15th' && new RegExp('^' + n + '$', 'i').test(x.name); })[0] ||
+    (S.Bills || []).filter(function (x) { return new RegExp('^' + n + '$', 'i').test(x.name); })[0]; return b ? +b.us : 0; };
+  var parts = [['groceries', find('Food')], ['Disney', find('Disney')], ['Christmas for the kids', EXTRA_CHRISTMAS], ['spending', find('Extra')]];
+  var total = sum(parts, function (x) { return x[1]; });
+  return { parts: parts, total: total, mine: r2(total / 2) };
+}
+function extraLine() { var x = extraCheck(); return 'Extra paycheck: ' + money(x.mine) + ' to the joint, half of ' + x.parts.map(function (p) { return p[0] + ' ' + money(p[1]); }).join(' + ') + '; no bills this time'; }
+function nextExtraPay() { var t = today(); return payPlan().filter(function (p) { return p.extra && p.date >= addDays(t, -3); })[0] || null; }
+
 /* Where a line of your checking counts: 'cur' (one pay period), 'next' (held for the next one), or during the
    overlap 'old' (the pay period you're wrapping up) and 'new' (the one your newest paycheck started). */
 function moneyMath(m) {
@@ -1348,7 +1383,7 @@ function moneyMath(m) {
     var p = P[potOfRow(r)], a = Math.abs(r.amount);
     r._pot = potOfRow(r);
     p.rows.push(r);
-    if (r.amount > 0) { p.income += a; if (isPay(r)) p.hasPay = true; }
+    if (r.amount > 0) { p.income += a; if (isPay(r)) { p.hasPay = true; var pl = planFor(r.date); if (pl && pl.extra) p.extra = true; } }
     else if (r.kind === 'bills') { p.bills += a; p.hasBills = true; }
     else if (r.kind === 'savings') p.saved += a;
     else if (r.kind === 'extra') p.joint += a;
@@ -1356,7 +1391,8 @@ function moneyMath(m) {
     else p.spend += a;                                               // spending, or not answered yet
   });
   lines.forEach(function (l) { P[l.pot].lines.push(l); P[l.pot].cards += l.amount; });
-  ['cur', 'old', 'new'].forEach(function (k) { if (P[k].hasPay && !P[k].hasBills) P[k].reserve = billsAmt; });
+  var extraAmt = extraCheck().mine;
+  ['cur', 'old', 'new'].forEach(function (k) { P[k].billsAmt = P[k].extra ? extraAmt : billsAmt; if (P[k].hasPay && !P[k].hasBills) P[k].reserve = P[k].billsAmt; });
   var out = function (p) { return p.spend + p.bills + p.reserve + p.saved + p.joint + p.cards; };
   var reserveAll = P.cur.reserve + P.old.reserve + P.new.reserve;
   var really = bal - passSit - unDepAmt + waitAmt - owedNet - reserveAll;
@@ -1537,7 +1573,7 @@ function questionsHtml(mm) {
       var withExtra = oldShare + mm.jointHalf;
       if (mate) hint = '<div class="q-hint">Goes with ' + esc(mate.name) + ' ' + money(mate.amount) + ' from ' + shortDate(mate.date) + '? ' +
         '<button class="qbtn on" data-act="ckpair" data-id="' + esc(id) + '" data-with="' + esc(mate.id) + '">Yes, they go together</button></div>';
-      else if (!billsPot.hasBills && Math.abs(amt - mm.billsAmt) <= 5) hint = '<div class="q-hint">Is this the bills transfer (' + money(mm.billsAmt) + ')? ' + qb(id, 'bills', 'Yes', 'on') + '</div>';
+      else if (!billsPot.hasBills && Math.abs(amt - (billsPot.billsAmt || mm.billsAmt)) <= 5) hint = '<div class="q-hint">Is this the ' + (billsPot.extra ? 'extra-check transfer' : 'bills transfer') + ' (' + money(billsPot.billsAmt || mm.billsAmt) + ')? ' + qb(id, 'bills', 'Yes', 'on') + '</div>';
       else if (oldShare > 0.5 && (Math.abs(amt - oldShare) <= 5 || Math.abs(amt - withExtra) <= 5 || (amt > oldShare && amt - oldShare <= mm.jointShort + 50)))
         hint = '<div class="q-hint">Is this the card transfer to the joint (your share ' + money(oldShare) + (amt - oldShare > 0.5 ? ', plus ' + money(amt - oldShare) + ' extra for the joint' : '') + ')? ' + qb(id, 'cards', 'Yes', 'on') + '</div>';
       else if (mm.passSit > 0.009 && amt <= mm.passSit + 5 && CARDISH.test(r.name))
@@ -1604,7 +1640,7 @@ function potLines(mm, key) {
                sub: (l.pending ? 'Pending · ' : '') + esc(l.from) + (l.split ? ' · your half of ' + money(l.full) : '') + ' · ' + how + (l.hold && !two ? ' · on hold on the Cards page' : ''),
                next: l.cover || l.src === 'ledger' ? undefined : (two ? nextOn : l.hold), pots: two ? key : '', nextAct: 'hold', nextId: l.id, nextT: l.src === 'pending' ? 'Pending' : 'Charges' });
   });
-  if (p.reserve) out.push({ name: 'Bills', date: '9999', amount: -p.reserve, sub: 'From Monthly Bills · set aside until the bills transfer shows up', fixed: 'Bills', muted: true });
+  if (p.reserve) out.push({ name: p.extra ? 'Extra check to the joint' : 'Bills', date: '9999', amount: -p.reserve, sub: p.extra ? extraLine() : 'From Monthly Bills · set aside until the bills transfer shows up', fixed: 'Bills', muted: true });
   out.sort(function (a, b) { return String(b.date || '').localeCompare(String(a.date || '')); });
   return out;
 }
@@ -1657,6 +1693,7 @@ function viewMoney(m) {
         '<div style="font-size:20px;font-weight:800">Held for next pay period</div></div><div class="big num">' + money(-mm.P.next.total) + '</div></div>' +
         '<div class="rows">' + nl.map(moneyLine).join('') + '</div></section>';
     }
+    var nx = nextExtraPay(); if (nx) h += '<p class="sub" style="margin-top:12px"><b>Next extra paycheck: ' + shortDate(nx.date) + (nx.date.slice(0, 4) !== today().slice(0, 4) ? ', ' + nx.date.slice(0, 4) : '') + '.</b> Instead of ' + money(mm.billsAmt) + ' for bills, you send ' + money(extraCheck().mine) + ' to the joint (half of groceries, Disney, Christmas for the kids and spending). The rest stays yours.</p>';
     h += '<p class="sub" style="margin-top:12px">When your next paycheck comes in, this page splits into two: what’s left from this pay period (for savings) and the new one. Wrap up the old one whenever you get to it.</p>';
   }
 
@@ -1708,7 +1745,7 @@ function wrapPanel(mm, m) {
   ];
   var info = [];
   var nb = mm.P['new'];
-  info.push(nb.hasBills ? 'Bills for this pay period sent: ' + money(nb.bills) : 'Bills for this pay period: ' + money(mm.billsAmt) + ' set aside until you send it');
+  info.push(nb.hasBills ? 'Bills for this pay period sent: ' + money(nb.bills) : (nb.extra ? extraLine() : 'Bills for this pay period: ' + money(mm.billsAmt)) + ' set aside until you send it');
   if (Math.abs(mm.passSit) > 0.009) info.push(money(mm.passSit) + ' of card money still to go out to the cards');
   var allOk = steps.every(function (s) { return s.ok; });
   return '<section class="panel" style="--c:#4C6EF5;margin-top:16px"><div class="phead"><div class="grow"><div class="eyebrow">Last pay period</div>' +
