@@ -343,17 +343,17 @@ SCENARIOS.push({
 });
 
 SCENARIOS.push({
-  title: 'The extra paycheck (Dec 31, 2026)',
+  title: 'The extra paycheck (Dec 18, 2026, picked by Eric)',
   about: 'On the extra check no bills are set aside; instead half of groceries + Disney + Christmas + spending goes to the joint.',
   data: (function () { var d = startingData(); d.Bills.push(
       { id: 'b_food', payOn: '15th', name: 'Food', total: 270, us: 270, order: 3, status: '' }, { id: 'b_dis', payOn: '15th', name: 'Disney', total: 394, us: 394, order: 4, status: '' },
       { id: 'b_ext', payOn: '15th', name: 'Extra', total: 252, us: 252, order: 5, status: '' });
-    d.Checking = [{ id: 'ck_dec18', date: '2026-12-18', name: 'Kenmore Town of Payroll Available', amount: 1862.12, kind: 'pay', pairId: '', period: '', order: 1, pot: '', manual: false, note: '', extra: 0, credit: 0, nolink: false }];
-    d.Settings = [{ id: 'periodPay', value: 'ck_dec18' }, { id: 'cardLedger', value: '[]' }]; return d; })(),
+    d.Checking = [{ id: 'ck_dec04', date: '2026-12-04', name: 'Kenmore Town of Payroll Available', amount: 1862.12, kind: 'pay', pairId: '', period: '', order: 1, pot: '', manual: false, note: '', extra: 0, credit: 0, nolink: false }];
+    d.Settings = [{ id: 'periodPay', value: 'ck_dec04' }, { id: 'cardLedger', value: '[]' }]; return d; })(),
   steps: [
-    { t: 'The Dec 31 paycheck lands', run: function () { bankLine('ck_dec31', '2026-12-31', 'Kenmore Town of Payroll Available', 1862.12, 'pay'); },
+    { t: 'The Dec 18 paycheck lands', run: function () { bankLine('ck_dec18', '2026-12-18', 'Kenmore Town of Payroll Available', 1862.12, 'pay'); },
       check: function () { var m = mm(); return [
-        yes('Dec 31 is the extra paycheck; Dec 18 and Jan 15 are not', A.planFor('2026-12-31').extra && !A.planFor('2026-12-18').extra && !A.planFor('2027-01-15').extra),
+        yes('Dec 18 is the extra paycheck; Dec 31 pays the Jan 1 bills', A.planFor('2026-12-18').extra && A.planFor('2026-12-31').bill === '2027-01-01'),
         money('Set aside for the joint on the extra check', 808, m.P['new'].reserve),
         says('Checklist explains the extra check', 'Extra paycheck: $808.00 to the joint', wrapText())]; } }
   ]
