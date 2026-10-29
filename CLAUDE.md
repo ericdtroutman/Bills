@@ -15,6 +15,9 @@ Eric's family budget app. The page (index.html) is served by GitHub Pages from m
 - Script changes still go out before a page change that needs them (deploy, then push the page).
 
 ## Rules
+- **The passcode is never saved on a device** (Eric, Oct 29, 2026): the page remembers only the app link and asks for the passcode every time it opens.
+- **Long range is hidden** (`SHOW_LONG_RANGE = false` in index.html). The code and the saved `longRange` setting are kept for later.
+- **Daily bank sync runs at about 6:00 AM** (`SYNC_SCHEDULE` in Code.js). Changing it replaces the trigger the next time the app is opened.
 - **tests.html must pass before any change to the money math ships.** It loads index.html in a hidden frame with saving switched off and replays the Pay Period Plan walkthrough. Run it headless before pushing (serve the repo with `python3 -m http.server`, open `/tests.html` in Playwright, read `window.__result`), and add checks there whenever the money math changes. Live copy: the GitHub Pages site + `/tests.html`.
 - This repo is **public**. Never write the passcode, tokens, the deployment id or the web app URL into any file. The passcode lives in Script Properties (`PASSCODE`); the deploy sign-in and deployment id are repository secrets.
 - New Sheet columns go at the **end** of a table in `TABLES`; `sheet_()` adds missing headers on its own.

@@ -379,9 +379,15 @@ function bankDisconnect_() {
   return { ok: true };
 }
 
+/* The daily sync runs at about 6:00 AM (Google fires it within a few minutes of that). SYNC_AT records which schedule the
+   current trigger was made with, so changing SYNC_SCHEDULE replaces the old trigger the next time the app is opened. */
+var SYNC_SCHEDULE = '06:00';
 function ensureSyncTrigger_() {
-  var has = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'dailyBankSync'; });
-  if (!has) ScriptApp.newTrigger('dailyBankSync').timeBased().everyDays(1).atHour(6).nearMinute(17).create();
+  var mine = ScriptApp.getProjectTriggers().filter(function (t) { return t.getHandlerFunction() === 'dailyBankSync'; });
+  if (mine.length && props_().getProperty('SYNC_AT') === SYNC_SCHEDULE) return;
+  mine.forEach(function (t) { ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('dailyBankSync').timeBased().everyDays(1).atHour(6).nearMinute(0).create();
+  props_().setProperty('SYNC_AT', SYNC_SCHEDULE);
 }
 
 function dailyBankSync() {
@@ -658,6 +664,7 @@ function appendRows_(table, rows) {
 function ensureSetup_() {
   Object.keys(TABLES).forEach(sheet_);
   ensureBackupTrigger_();
+  if (props_().getProperty('SIMPLEFIN_ACCESS') && props_().getProperty('SYNC_AT') !== SYNC_SCHEDULE) ensureSyncTrigger_();
   var settings = readTable_('Settings');
   var seeded = settings.some(function (s) { return s.id === 'seeded'; });
   if (!seeded) {

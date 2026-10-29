@@ -450,7 +450,7 @@
       <button data-act="nav" data-v="bills">Monthly Bills</button>
       <button data-act="nav" data-v="money">My Money</button>
       <button data-act="nav" data-v="savings">Savings</button>
-      <button data-act="nav" data-v="long">Long range</button>
+      <!-- Long range is hidden for now (SHOW_LONG_RANGE below). Its code and saved numbers are kept. -->
       <button data-act="nav" data-v="christmas">Christmas</button>
       <button data-act="nav" data-v="bank">Bank Sync</button>
     </nav>
@@ -459,7 +459,7 @@
       <span id="status"></span>
       <button class="btn small" id="undoBtn" data-act="undo" disabled title="Nothing to undo">↶ Undo</button>
       <button class="btn small" data-act="backup">Back up</button>
-      <button class="link" data-act="logout" title="Forget the link and passcode on this device">Log out</button>
+      <button class="link" data-act="logout" title="Lock the app and forget the app link on this device">Log out</button>
     </div>
   </div>
 </header>
@@ -486,7 +486,10 @@ var openNote = {};
 var showPw = {};                    // which passwords are showing
 
 /* ---- connection to your Google script (link + passcode are kept only on this device) */
-var CONN = { url: remember('url'), key: remember('key') };
+/* The app link is remembered on this device; the passcode never is, so it's asked for every time the page opens. */
+var SHOW_LONG_RANGE = false;       // Long range page hidden for now (Eric, Oct 29, 2026)
+forget('key');                     // clears a passcode saved by older versions of the page
+var CONN = { url: remember('url'), key: null };
 
 /* ---- Preview: the copy of this page in beta/ reads your real data but never saves or changes anything.
    New features are built there first; they move to the real page only once Eric has tried them. */
@@ -2072,7 +2075,7 @@ function lrImportHash() {
     if (kid) { if (lr.kids[+kid[1]] && kid[2] in LR_DEFAULT.kids[0]) { lr.kids[+kid[1]][kid[2]] = v; n++; } }
     else if (k in LR_DEFAULT && k !== 'kids') { lr[k] = v; n++; }
   });
-  if (n) { lrSet(lr); view = 'long'; store('view', view); toast('Long range: filled in ' + n + ' number' + (n === 1 ? '' : 's')); }
+  if (n) { lrSet(lr); if (SHOW_LONG_RANGE) { view = 'long'; store('view', view); } toast('Long range: filled in ' + n + ' number' + (n === 1 ? '' : 's')); }
 }
 function yearsBetween(a, b) { return (new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / (365.25 * 864e5); }
 function addYears(d, n) { var x = new Date(d + 'T12:00:00'); x.setFullYear(x.getFullYear() + Math.floor(n)); x.setDate(x.getDate() + Math.round((n % 1) * 365.25)); return x.toISOString().slice(0, 10); }
@@ -2205,7 +2208,8 @@ function lrChange(el) {
 
 function render() {
   var m = calc();
-  var views = { cards: viewCards, joint: viewJoint, bills: viewBills, money: viewMoney, savings: viewSavings, long: viewLong, christmas: viewChristmas, bank: viewBank, search: viewSearch };
+  var views = { cards: viewCards, joint: viewJoint, bills: viewBills, money: viewMoney, savings: viewSavings, christmas: viewChristmas, bank: viewBank, search: viewSearch };
+  if (SHOW_LONG_RANGE) views.long = viewLong;
   if (!views[view]) view = 'cards';
   document.getElementById('app').innerHTML = views[view](m);
   Array.prototype.forEach.call(document.querySelectorAll('nav button'), function (b) { b.classList.toggle('on', b.dataset.v === view); });
@@ -2452,7 +2456,7 @@ document.addEventListener('click', function (e) {
   }
   else if (a === 'logout') {
     if (PREVIEW) { toast('The preview shares your sign-in with the real app. Log out from the real app.'); return; }
-    confirmBox('Log out on this device?', 'This forgets the app link and passcode on this device only. Your bills stay safe in your Google Sheet.', 'Log out', function () {
+    confirmBox('Log out on this device?', 'This forgets the app link on this device only. Your bills stay safe in your Google Sheet.', 'Log out', function () {
       forget('url'); forget('key'); CONN = { url: null, key: null }; S = null; showConnect();
     });
   }
@@ -2513,7 +2517,7 @@ document.addEventListener('submit', function (e) {
     var link = normalizeLink(form.querySelector('[name="link"]').value), key = form.querySelector('[name="key"]').value;
     if (!link) { showConnect('That doesn’t look like your app link. It should end in /exec, or paste the Deployment ID that starts with AKfy.'); return; }
     if (!key) { CONN.url = link; showConnect('Type your passcode.'); return; }
-    CONN = { url: link, key: key };
+    CONN = { url: link, key: key }; showConnect.editLink = false;
     load();
     return;
   }
@@ -2637,15 +2641,18 @@ function autoScroll() {
 /* ======================================================================= start */
 function showConnect(msg) {
   document.body.classList.add('locked');
+  var known = !!CONN.url && !showConnect.editLink;
   document.getElementById('app').innerHTML =
     '<form class="connect" data-form="connect"><h1>Open your bills</h1>' +
-    '<p class="sub" style="margin:0">Enter these once on this device and it will remember them.</p>' +
-    '<label for="c-link">App link</label><input id="c-link" name="link" autocomplete="off" placeholder="https://script.google.com/macros/s/…/exec" value="' + esc(CONN.url || '') + '">' +
-    '<label for="c-key">Passcode</label><input id="c-key" name="key" type="password" autocomplete="current-password" placeholder="Your passcode">' +
+    '<p class="sub" style="margin:0">' + (known ? 'Type your passcode to open the app. It’s asked for every time.' : 'Enter the app link once on this device. The passcode is asked for every time you open the app.') + '</p>' +
+    (known ? '<input type="hidden" name="link" value="' + esc(CONN.url) + '">' :
+      '<label for="c-link">App link</label><input id="c-link" name="link" autocomplete="off" placeholder="https://script.google.com/macros/s/…/exec" value="' + esc(CONN.url || '') + '">') +
+    '<label for="c-key">Passcode</label><input id="c-key" name="key" type="password" autocomplete="off" placeholder="Your passcode">' +
     (msg ? '<div class="err">' + esc(msg) + '</div>' : '') +
     '<button class="btn primary" type="submit">Open</button>' +
+    (known ? '<div class="help"><button type="button" class="link" onclick="showConnect.editLink = true; showConnect();">Change the app link</button></div>' :
     '<div class="help">The app link is in Google Apps Script under Deploy &gt; Manage deployments (Web app URL). ' +
-    'You can also paste just the Deployment ID that starts with AKfy. The passcode is the one you typed at the top of Code.gs.</div></form>';
+    'You can also paste just the Deployment ID that starts with AKfy.</div>') + '</form>';
   var f = document.getElementById(CONN.url ? 'c-key' : 'c-link'); if (f) f.focus();
 }
 
@@ -2657,7 +2664,7 @@ function load() {
   (pending.length ? api('apply', { ops: pending }) : Promise.resolve()).then(function () {
     return api('getData');
   }).then(function (data) {
-    store('url', CONN.url); store('key', CONN.key);   // remember only once they work
+    store('url', CONN.url);   // remember the link once it works (the passcode is never saved)
     S = data; prep(); lrImportHash(); status(PREVIEW ? 'Preview: nothing saves' : 'All changes saved'); render();
   }, function (err) {
     queue = pending.concat(queue);
