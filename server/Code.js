@@ -379,14 +379,14 @@ function bankDisconnect_() {
   return { ok: true };
 }
 
-/* The daily sync runs at about 6:00 AM (Google fires it within a few minutes of that). SYNC_AT records which schedule the
+/* The daily sync runs at about 6:07 AM (Google fires it within a few minutes of that; SimpleFIN asks apps to avoid the top of the hour). SYNC_AT records which schedule the
    current trigger was made with, so changing SYNC_SCHEDULE replaces the old trigger the next time the app is opened. */
-var SYNC_SCHEDULE = '06:00';
+var SYNC_SCHEDULE = '06:07';
 function ensureSyncTrigger_() {
   var mine = ScriptApp.getProjectTriggers().filter(function (t) { return t.getHandlerFunction() === 'dailyBankSync'; });
   if (mine.length && props_().getProperty('SYNC_AT') === SYNC_SCHEDULE) return;
   mine.forEach(function (t) { ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger('dailyBankSync').timeBased().everyDays(1).atHour(6).nearMinute(0).create();
+  ScriptApp.newTrigger('dailyBankSync').timeBased().everyDays(1).atHour(6).nearMinute(7).create();
   props_().setProperty('SYNC_AT', SYNC_SCHEDULE);
 }
 
