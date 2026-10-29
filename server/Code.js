@@ -16,7 +16,7 @@ var PASSCODE = PropertiesService.getScriptProperties().getProperty('PASSCODE') |
 
 var TABLES = {
   Cards:       ['id', 'name', 'color', 'paid', 'order', 'url', 'username', 'password'],
-  Charges:     ['id', 'cardId', 'item', 'amount', 'who', 'order', 'date', 'bankId', 'hold', 'settled'],
+  Charges:     ['id', 'cardId', 'item', 'amount', 'who', 'order', 'date', 'bankId', 'hold', 'settled', 'addedAt', 'bankAsOf'],   // addedAt: when the app brought it in; bankAsOf: when SimpleFIN last heard from that bank
   Joint:       ['id', 'item', 'amount', 'order'],
   Bills:       ['id', 'payOn', 'name', 'total', 'us', 'paid', 'note', 'order', 'status', 'url', 'username', 'password'],
   Funds:       ['id', 'name', 'color', 'order', 'target', 'perCheck'],   // target: goal amount; perCheck: set aside from each paycheck's leftover
@@ -24,25 +24,26 @@ var TABLES = {
   People:      ['id', 'name', 'budget', 'order'],
   Gifts:       ['id', 'personId', 'item', 'amount', 'order'],
   Settings:    ['id', 'value'],
-  BankAccounts: ['id', 'name', 'bank', 'cardId', 'balance', 'nick', 'saveAs'],   // nick: your own name; saveAs: mine / joint / out (Savings page)
+  BankAccounts: ['id', 'name', 'bank', 'cardId', 'balance', 'nick', 'saveAs', 'bankAsOf'],   // nick: your own name; saveAs: mine / joint / out (Savings page)
   Imported:    ['id', 'date', 'amount', 'cardId'],
   History:     ['id', 'cardId', 'item', 'amount', 'who', 'date', 'clearedOn'],
   Pending:     ['id', 'cardId', 'item', 'amount', 'who', 'date', 'bankId', 'hold'],
   JointCash:   ['id', 'item', 'amount', 'date', 'order'],
-  Checking:    ['id', 'date', 'name', 'amount', 'kind', 'pairId', 'period', 'order', 'pot', 'manual', 'note', 'extra', 'credit', 'nolink', 'other'],
+  Checking:    ['id', 'date', 'name', 'amount', 'kind', 'pairId', 'period', 'order', 'pot', 'manual', 'note', 'extra', 'credit', 'nolink', 'other', 'addedAt', 'bankAsOf'],
   Periods:     ['id', 'startDate', 'endDate', 'income', 'cards', 'spend', 'bills', 'saved', 'byType', 'joint', 'savedTo'],
   TypeRules:   ['id', 'type'],
   Rules:       ['id', 'kind'],
   CheckPending: ['id', 'date', 'name', 'amount'],
   JointBank:   ['id', 'date', 'name', 'amount', 'pending', 'other'],   // copy of the joint checking's recent lines, rewritten on every sync
-  JointKinds:  ['id', 'kind', 'amount', 'date']                 // your answer for each joint checking line (same id as JointBank)
+  JointKinds:  ['id', 'kind', 'amount', 'date'],                // your answer for each joint checking line (same id as JointBank)
+  SyncLog:     ['id', 'at', 'how', 'added', 'banks']            // one row per bank sync: when, automatic or Sync now, how many came in, when SimpleFIN last heard from each bank
 };
 var NUMBER_FIELDS = { amount: 1, total: 1, us: 1, budget: 1, order: 1, balance: 1, income: 1, cards: 1, spend: 1, bills: 1, saved: 1,
                       extra: 1, credit: 1, joint: 1, target: 1, perCheck: 1 };
 var BOOL_FIELDS = { paid: 1, hold: 1, manual: 1, nolink: 1, pending: 1 };
 var TEXT_FIELDS = { id: 1, cardId: 1, fundId: 1, personId: 1, item: 1, name: 1, note: 1, who: 1,
                     payOn: 1, color: 1, date: 1, value: 1, status: 1,
-                    url: 1, username: 1, password: 1, bank: 1, bankId: 1, clearedOn: 1, nick: 1, other: 1, kind: 1, pairId: 1, period: 1, settled: 1, startDate: 1, endDate: 1, byType: 1, savedTo: 1, type: 1, pot: 1, saveAs: 1 };
+                    url: 1, username: 1, password: 1, bank: 1, bankId: 1, clearedOn: 1, nick: 1, other: 1, kind: 1, pairId: 1, period: 1, settled: 1, startDate: 1, endDate: 1, byType: 1, savedTo: 1, type: 1, pot: 1, saveAs: 1, addedAt: 1, bankAsOf: 1, at: 1, how: 1, banks: 1 };
 
 /* ---------------------------------------------------------------- entry points */
 
@@ -67,7 +68,7 @@ function doPost(e) {
     else if (req.fn === 'getHistory') out = { ok: true, data: readTable_('History') };
     else if (req.fn === 'getOldChecking') out = { ok: true, data: oldChecking_() };
     else if (req.fn === 'bankConnect') out = { ok: true, data: bankConnect_(req.token) };
-    else if (req.fn === 'bankSync') out = { ok: true, data: syncBank_() };
+    else if (req.fn === 'bankSync') out = { ok: true, data: syncBank_('Sync now') };
     else if (req.fn === 'bankDisconnect') out = { ok: true, data: bankDisconnect_() };
     else throw new Error('Unknown request.');
   } catch (err) {
@@ -108,7 +109,7 @@ function setup() {
 function getData_() {
   ensureSetup_();
   var out = {};
-  Object.keys(TABLES).forEach(function (name) { if (name !== 'Imported' && name !== 'History') out[name] = readTable_(name); });
+  Object.keys(TABLES).forEach(function (name) { if (name !== 'Imported' && name !== 'History' && name !== 'SyncLog') out[name] = readTable_(name); });
   // checking lines filed with older pay periods stay in the Sheet but aren't sent on every open (search asks for them)
   var keep = checkingKeep_(out.Periods);
   out.Checking = out.Checking.filter(function (r) { return !r.period || r.period === keep; });
@@ -379,19 +380,19 @@ function bankDisconnect_() {
   return { ok: true };
 }
 
-/* The daily sync runs at about 6:07 AM (Google fires it within a few minutes of that; SimpleFIN asks apps to avoid the top of the hour). SYNC_AT records which schedule the
+/* The daily sync runs at about 8:30 AM (Eric, Oct 29, 2026; Google fires it within about 15 minutes of that; SimpleFIN asks apps to avoid the top of the hour). SYNC_AT records which schedule the
    current trigger was made with, so changing SYNC_SCHEDULE replaces the old trigger the next time the app is opened. */
-var SYNC_SCHEDULE = '06:07';
+var SYNC_SCHEDULE = '08:30';
 function ensureSyncTrigger_() {
   var mine = ScriptApp.getProjectTriggers().filter(function (t) { return t.getHandlerFunction() === 'dailyBankSync'; });
   if (mine.length && props_().getProperty('SYNC_AT') === SYNC_SCHEDULE) return;
   mine.forEach(function (t) { ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger('dailyBankSync').timeBased().everyDays(1).atHour(6).nearMinute(7).create();
+  ScriptApp.newTrigger('dailyBankSync').timeBased().everyDays(1).atHour(8).nearMinute(30).create();
   props_().setProperty('SYNC_AT', SYNC_SCHEDULE);
 }
 
 function dailyBankSync() {
-  try { syncBank_(); }
+  try { syncBank_('Automatic'); }
   catch (e) { setSetting_('lastSyncMsg', 'Sync failed: ' + (e.message || e)); }
 }
 
@@ -424,9 +425,17 @@ function saveAccounts_(data) {
     row.name = a.name || '';
     row.bank = conns[a.conn_id] || (a.org && (a.org.name || a.org.domain)) || '';
     row.balance = parseFloat(a.balance) || 0;
+    row.bankAsOf = stamp_(a['balance-date']);
     upsert_('BankAccounts', row);
   });
   return keys;
+}
+
+/* A readable time like "Thu Oct 29 · 8:35 AM". The "·" keeps Sheets from turning it into a date (which would drop the time). */
+function stamp_(secOrDate) {
+  if (!secOrDate) return '';
+  var d = secOrDate instanceof Date ? secOrDate : new Date(+secOrDate * 1000);
+  return isNaN(d) ? '' : Utilities.formatDate(d, Session.getScriptTimeZone(), "EEE MMM d '·' h:mm a");
 }
 
 function acctKey_(a) { return (a.conn_id || (a.org && (a.org.domain || a.org.name)) || 'x') + '|' + a.id; }
@@ -448,7 +457,19 @@ function tidyName_(s) {
   return s.slice(0, 60);
 }
 
-function syncBank_() {
+/* One row in the SyncLog tab per sync, newest at the bottom; only the last 500 are kept. */
+function logSync_(data, how, added, cardFor, nowStamp) {
+  var names = {};
+  readTable_('BankAccounts').forEach(function (r) { names[r.id] = r.nick || r.name; });
+  var banks = (data.accounts || []).filter(function (a) { return cardFor[acctKey_(a)]; }).map(function (a) {
+    return (names[acctKey_(a)] || a.name) + ': ' + (stamp_(a['balance-date']) || 'no time given');
+  }).join('  |  ');
+  appendRows_('SyncLog', [{ id: 'sync_' + Date.now(), at: nowStamp, how: how || 'Automatic', added: added, banks: banks }]);
+  var sh = sheet_('SyncLog'), extra = sh.getLastRow() - 1 - 500;
+  if (extra > 0) sh.deleteRows(2, extra);
+}
+
+function syncBank_(how) {
   var lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
@@ -458,6 +479,7 @@ function syncBank_() {
     // SimpleFIN allows at most 90 days per request; look back 45 days (overlap catches late posts)
     var fromMs = Math.max(startMs, Date.now() - 45 * 864e5);
     var data = sfFetch_('version=2&pending=1&start-date=' + Math.floor(fromMs / 1000));
+    var nowStamp = stamp_(new Date());
     saveAccounts_(data);
     var partners = {};
     try { partners = transferPartners_(data); } catch (e) { console.error('Transfer matching failed: ' + (e.message || e)); }
@@ -473,7 +495,7 @@ function syncBank_() {
     var oldPending = {};
     readTable_('Pending').forEach(function (r) { oldPending[r.bankId] = r; });
     (data.accounts || []).forEach(function (a) {
-      var key = acctKey_(a), cardId = cardFor[key];
+      var key = acctKey_(a), cardId = cardFor[key], asOf = stamp_(a['balance-date']);
       if (!cardId) return;                                  // not matched to a card yet
       if (cardId === 'checking') {                          // your own checking account (My Money)
         (a.transactions || []).forEach(function (t) {
@@ -496,7 +518,8 @@ function syncBank_() {
           seen[ck] = true;
           newImported.push({ id: ck, date: cDate, amount: amt, cardId: 'checking' });
           newChecking.push({ id: ck, date: cDate, name: tidyName_(desc), amount: amt,
-                             kind: amt > 0 || looksLikeTransfer ? '' : 'spend', pairId: '', period: '', order: ++order, other: partners[ck] || '' });
+                             kind: amt > 0 || looksLikeTransfer ? '' : 'spend', pairId: '', period: '', order: ++order, other: partners[ck] || '',
+                             addedAt: nowStamp, bankAsOf: asOf });
         });
         return;
       }
@@ -526,7 +549,7 @@ function syncBank_() {
         if (amount < 0 && /payment|paymt|pymnt|pymt|\bpmt\b|autopay|auto pay|thank you|online transfer|ach credit/i.test((t.description || '') + ' ' + (t.payee || ''))) return;
         if (!amount) return;
         newCharges.push({ id: 'bk_' + Utilities.getUuid().slice(0, 12), cardId: cardId, item: tidyName_(desc),
-                          amount: amount, who: '', order: ++order, date: date, bankId: tkey });
+                          amount: amount, who: '', order: ++order, date: date, bankId: tkey, addedAt: nowStamp, bankAsOf: asOf });
       });
     });
     // a pending charge that just posted keeps the person and hold you gave it (same card, same amount, within 10 days)
@@ -551,6 +574,7 @@ function syncBank_() {
     // yes/no only (never the passcode): lets Claude confirm Script Properties is set up before updating the web app
     try { setSetting_('passcodeReady', PASSCODE && PASSCODE !== 'change-me' ? 'yes' : 'no'); } catch (e) {}
     recordErrors_(data, newCharges.length + newChecking.length);
+    try { logSync_(data, how, newCharges.length + newChecking.length, cardFor, nowStamp); } catch (e) { console.error('Sync log failed: ' + (e.message || e)); }
     return { added: newCharges.length + newChecking.length };
   } finally {
     lock.releaseLock();
