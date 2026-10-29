@@ -6,7 +6,7 @@ Eric's family budget app. The page (index.html) is served by GitHub Pages from m
 - **Page:** edit index.html, commit, push to main. GitHub Pages republishes it in about a minute.
 - **Script:** edit server/Code.js (or other files in server/), commit, push to main. `.github/workflows/deploy-script.yml` runs `clasp push --force` and `clasp redeploy`, so the web app link never changes. The `DEPLOYMENT_ID` secret holds the whole web app link; the workflow takes the id out of it, and the run fails if the web app's version didn't move. Its notice shows the deployments and versions: read it with `gh run list --repo ericdtroutman/bills --workflow deploy-script.yml --limit 1`, then `gh api repos/ericdtroutman/bills/check-runs/<job id>/annotations` (job id from `gh run view <run id> --json jobs`). Logs themselves can't be read from the workspace.
 - **Checking the live script:** `.github/workflows/check-script.yml` (runs when its file changes, or by hand) reports, read-only, what code Google has, the versions and deployments, and whether the PASSCODE script property is set (via a temporary deployment it removes again).
-- Until Oct 28, 2026 the web app was stuck on version 12 (the redeploy was given the full link). The daily sync trigger was created from the web app and may still run version 12; check that the sync uses new script code before relying on it.
+- Until Oct 28, 2026 the web app was stuck on version 12 (the redeploy was given the full link). Fixed; the daily sync trigger runs the current code too (confirmed by the Oct 29 6:18 AM sync: passcodeReady = yes, JointBank refreshed).
 - Commit straight to main with a plain-language message. Eric doesn't review PRs.
 
 ## No preview step (Eric, Oct 28, 2026)
