@@ -16,7 +16,7 @@ var PASSCODE = PropertiesService.getScriptProperties().getProperty('PASSCODE') |
 
 var TABLES = {
   Cards:       ['id', 'name', 'color', 'paid', 'order', 'url', 'username', 'password'],
-  Charges:     ['id', 'cardId', 'item', 'amount', 'who', 'order', 'date', 'bankId', 'hold', 'settled', 'addedAt', 'bankAsOf'],   // addedAt: when the app brought it in; bankAsOf: when SimpleFIN last heard from that bank
+  Charges:     ['id', 'cardId', 'item', 'amount', 'who', 'order', 'date', 'bankId', 'hold', 'settled', 'addedAt', 'bankAsOf', 'ret'],   // addedAt: when the app brought it in; bankAsOf: when SimpleFIN last heard from that bank; ret: date marked Returning (+ |no=refund ids it isn't)
   Joint:       ['id', 'item', 'amount', 'order'],
   Bills:       ['id', 'payOn', 'name', 'total', 'us', 'paid', 'note', 'order', 'status', 'url', 'username', 'password'],
   Funds:       ['id', 'name', 'color', 'order', 'target', 'perCheck'],   // target: goal amount; perCheck: set aside from each paycheck's leftover
@@ -43,7 +43,7 @@ var NUMBER_FIELDS = { amount: 1, total: 1, us: 1, budget: 1, order: 1, balance: 
 var BOOL_FIELDS = { paid: 1, hold: 1, manual: 1, nolink: 1, pending: 1 };
 var TEXT_FIELDS = { id: 1, cardId: 1, fundId: 1, personId: 1, item: 1, name: 1, note: 1, who: 1,
                     payOn: 1, color: 1, date: 1, value: 1, status: 1,
-                    url: 1, username: 1, password: 1, bank: 1, bankId: 1, clearedOn: 1, nick: 1, other: 1, kind: 1, pairId: 1, period: 1, settled: 1, startDate: 1, endDate: 1, byType: 1, savedTo: 1, type: 1, pot: 1, saveAs: 1, addedAt: 1, bankAsOf: 1, at: 1, how: 1, banks: 1 };
+                    url: 1, username: 1, password: 1, bank: 1, bankId: 1, clearedOn: 1, nick: 1, other: 1, kind: 1, pairId: 1, period: 1, settled: 1, startDate: 1, endDate: 1, byType: 1, savedTo: 1, type: 1, pot: 1, saveAs: 1, addedAt: 1, bankAsOf: 1, ret: 1, at: 1, how: 1, banks: 1 };
 
 /* ---------------------------------------------------------------- entry points */
 
