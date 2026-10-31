@@ -139,6 +139,14 @@
   .row.held select.who { filter: grayscale(1); opacity: .6; }
   .hchip { font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 999px; background: #E9ECF1; color: #6B7280; margin-left: 4px; text-decoration: none; }
   .bk.hold { background: #E9ECF1; color: #495057; }
+  .rchip { font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 999px; background: #E7F0FF; color: #1C4FB8; margin-left: 4px; white-space: nowrap; }
+  .rchip.late { background: #FFE8CC; color: #C2410C; }
+  .bk.ret { background: #E7F0FF; color: #1C4FB8; }
+  .rows.ret { background: #F7FAFF; border-bottom: 1px dashed #C9D8F5; }
+  .rows.ret .row { display: block; padding-top: 10px; padding-bottom: 10px; }
+  .ret-line { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+  .ret-btn { border: 0; background: none; padding: 0; margin-left: 6px; color: #1C4FB8; font-size: 11px; font-weight: 700; }
+  .ret-btn:hover { text-decoration: underline; }
   .g-bill { grid-template-columns: 16px 28px 1fr 96px 96px 28px 64px 22px; }
   .row.g-bill, .hrow.g-bill { padding-left: 8px; }
   .grip { width: 16px; height: 28px; display: grid; place-items: center; color: #C3C8D2; cursor: grab;
@@ -654,9 +662,36 @@ function pendingMath() {
            eric: by.Eric + by.Split / 2 + by[EJ] / 2, arianna: by.Arianna + by.Split / 2, joint: by.Joint + by[EJ] / 2,
            unlabeled: P.filter(function (p) { return WHO.indexOf(p.who) < 0; }).length };
 }
+/* ---- returns: a charge marked Returning stays on its card but counts nowhere until its refund comes in (Eric, Oct 31, 2026).
+   ret holds the date it was marked, plus "|no=id,id" for refunds Eric said aren't its refund. */
+function counts(c) { return !c.hold && !c.ret; }
+function retDate(c) { return String(c.ret || '').split('|')[0]; }
+function retNo(c) { var m = String(c.ret || '').match(/\|no=(.*)$/), o = {}; if (m) m[1].split(',').forEach(function (x) { if (x) o[x] = 1; }); return o; }
+function retLate(c) { var d = retDate(c); return !!d && d <= daysAgo(30); }
+/* refunds on the same card that could be this return's refund: money back, not more than the charge, on or after its date */
+function refundsFor(c) {
+  var no = retNo(c);
+  return S.Charges.filter(function (r) {
+    return r.cardId === c.cardId && +r.amount < 0 && !r.ret && !r.settled && !no[r.id] && -r.amount <= +c.amount + 0.005 && (!c.date || !r.date || r.date >= c.date);
+  }).sort(function (a, b) { return Math.abs(+c.amount + +a.amount) - Math.abs(+c.amount + +b.amount) || String(a.date).localeCompare(String(b.date)); });
+}
+/* the refund came in: both leave together (filed in History so search still finds them). A smaller refund leaves the rest:
+   as a normal charge (more = false) or still waiting for the rest of the refund (more = true). */
+function settleReturn(cid, rid, more) {
+  var c = find('Charges', cid), r = find('Charges', rid); if (!c || !r) return;
+  var day = today(), left = r2(+c.amount + +r.amount);
+  undoLabel = 'matching the refund for “' + c.item + '”';
+  upsert('History', { id: r.id, cardId: r.cardId, item: r.item + ' (refund for ' + c.item + ')', amount: r.amount, who: c.who || '', date: r.date || '', clearedOn: day });
+  removeRow('Charges', r.id);
+  if (left < 0.01) {
+    upsert('History', { id: c.id, cardId: c.cardId, item: c.item + ' (returned)', amount: c.amount, who: c.who || '', date: c.date || '', clearedOn: day });
+    removeRow('Charges', c.id);
+  } else if (more) upsert('Charges', { id: c.id, amount: left });
+  else upsert('Charges', { id: c.id, amount: left, ret: '', item: c.item + ' (part refunded)' });
+}
 function calc() {
   var tag = {};
-  var live = S.Charges.filter(function (c) { return !c.hold; });     // charges on hold don't count anywhere
+  var live = S.Charges.filter(counts);     // charges on hold or being returned don't count anywhere
   WHO.forEach(function (w) { tag[w] = sum(live.filter(function (c) { return c.who === w; }), function (c) { return c.amount; }); });
   var onCards = sum(live, function (c) { return c.amount; });
   var tagged = sum(WHO, function (w) { return tag[w]; });
@@ -670,7 +705,8 @@ function calc() {
   return {
     tag: tag, onCards: onCards, untagged: Math.round((onCards - tagged) * 100) / 100,
     needN: live.filter(function (c) { return WHO.indexOf(c.who) < 0; }).length,
-    held: S.Charges.filter(function (c) { return c.hold; }),
+    held: S.Charges.filter(function (c) { return c.hold && !c.ret; }),
+    returning: S.Charges.filter(function (c) { return c.ret; }),
     pend: pendingMath(),
     eric: tag.Eric + tag.Split / 2 + tag[EJ] / 2, arianna: tag.Arianna + tag.Split / 2, jointCards: tag.Joint + tag[EJ] / 2,
     inJoint: inJoint, cash: sum(S.JointCash || [], function (j) { return j.amount; }),
@@ -754,16 +790,19 @@ function viewCards(m) {
     tile('Bills on cards', m.tag.Bills, { hint: 'Already in the monthly budget' }) +
     tile('Total on all cards', m.onCards, { hint: m.needN ? m.needN + (m.needN === 1 ? ' charge needs' : ' charges need') + ' a person' :
       (m.held.length ? money(sum(m.held, function (x) { return x.amount; })) + ' on hold, not counted' :
+      m.returning.length ? money(sum(m.returning, function (x) { return x.amount; })) + ' being returned, not counted' :
       (m.pend.n ? '+ ' + money(m.pend.all) + ' pending' : 'Every charge has a person')), warn: !!m.needN }) +
     '</div>';
 
   h += sinceNudge(m);
   h += '<div class="pills">';
   cards.forEach(function (c) {
-    var t = sum(S.Charges.filter(function (x) { return x.cardId === c.id && !x.hold; }), function (x) { return x.amount; });
+    var t = sum(S.Charges.filter(function (x) { return x.cardId === c.id && counts(x); }), function (x) { return x.amount; });
+    var nRet = S.Charges.filter(function (x) { return x.cardId === c.id && x.ret; }).length;
     h += '<button class="pill' + (c.id === selCard ? ' on' : '') + '" style="--c:' + col(c.color) + '" data-act="card" data-id="' + c.id + '">' +
       '<span class="pname">' + esc(c.name) + (c.paid ? ' <span class="badge">Paid</span>' : '') +
-      (function () { var n = S.Charges.filter(function (x) { return x.cardId === c.id && !x.who && !x.hold; }).length; return n ? ' <span class="badge warn">' + n + ' new</span>' : ''; })() + '</span>' +
+      (function () { var n = S.Charges.filter(function (x) { return x.cardId === c.id && !x.who && counts(x); }).length; return n ? ' <span class="badge warn">' + n + ' new</span>' : ''; })() +
+      (nRet ? ' <span class="rchip" title="Being returned">↩ ' + nRet + '</span>' : '') + '</span>' +
       '<span class="ptot num">' + money(t) + '</span>' +
       (function () { var pp = (S.Pending || []).filter(function (x) { return x.cardId === c.id; }); return pp.length ? '<span class="ppend">+ ' + money(sum(pp, function (x) { return x.amount; })) + ' pending</span>' : ''; })() +
       '</button>';
@@ -773,15 +812,18 @@ function viewCards(m) {
   var card = cards.filter(function (c) { return c.id === selCard; })[0];
   if (!card) return h + '<div class="panel"><div class="empty">Add your first card to get started.</div></div>';
   var items = S.Charges.filter(function (x) { return x.cardId === card.id; }).sort(newestFirst);
+  var retItems = items.filter(function (x) { return x.ret; });
+  items = items.filter(function (x) { return !x.ret; });
   var liveItems = items.filter(function (x) { return !x.hold; }), heldItems = items.filter(function (x) { return x.hold; });
   var total = sum(liveItems, function (x) { return x.amount; });
   var heldTotal = sum(heldItems, function (x) { return x.amount; });
+  var retTotal = sum(retItems, function (x) { return x.amount; });
 
   h += '<section class="panel" style="--c:' + col(card.color) + '"><div class="phead">' +
     '<div class="grow"><div class="eyebrow">Card</div>' + textCell('Cards', card.id, 'name', card.name, '', 'title-in') +
     '<button class="btn small" style="margin-top:6px" data-act="login" data-t="Cards" data-id="' + card.id + '">' + KEY_SVG.replace('<svg', '<svg style="width:13px;height:13px;vertical-align:-2px;margin-right:5px"') + (openLogin[card.id] ? 'Hide login' : 'Login info' + (hasLogin(card) ? ' ✓' : '')) + '</button></div>' +
     '<div class="big num">' + money(total) + '<small>' + liveItems.length + ' charge' + (liveItems.length === 1 ? '' : 's') +
-      (heldItems.length ? ' · ' + money(heldTotal) + ' on hold' : '') + '</small></div>' +
+      (heldItems.length ? ' · ' + money(heldTotal) + ' on hold' : '') + (retItems.length ? ' · ' + money(retTotal) + ' being returned' : '') + '</small></div>' +
     '</div>';
   if (openLogin[card.id]) h += loginBox('Cards', card);
   var parts = WHO.map(function (w) {
@@ -791,6 +833,7 @@ function viewCards(m) {
   var needN = liveItems.filter(function (x) { return !x.who; }).length;
   if (needN) parts = '<span class="bk warn">' + needN + (needN === 1 ? ' needs' : ' need') + ' a person <b>' + money(sum(liveItems.filter(function (x) { return !x.who; }), function (x) { return x.amount; })) + '</b></span>' + parts;
   if (heldItems.length) parts += '<span class="bk hold">On hold (not counted) <b>' + money(heldTotal) + '</b></span>';
+  if (retItems.length) parts += '<span class="bk ret">Being returned (not counted) <b>' + money(retTotal) + '</b></span>';
   if (parts) h += '<div class="breakdown">' + parts + '</div>';
 
   h += '<form class="addrow" data-form="charge" data-card="' + card.id + '">' +
@@ -814,13 +857,44 @@ function viewCards(m) {
     });
     h += '</div>';
   }
+  var refundOf = {};     // refund id -> the return it may belong to
+  if (retItems.length) {
+    h += '<div class="pend-head"><b>Being returned · ' + money(retTotal) + '</b><span>Not counted for anyone. When the refund comes in, say which return it’s for and both come off.</span></div><div class="rows ret">';
+    // each refund is offered to one return only: exact amounts first, then the oldest return
+    var offer = {};
+    [true, false].forEach(function (exact) {
+      retItems.slice().sort(function (a, b) { return String(a.date).localeCompare(String(b.date)); }).forEach(function (x) {
+        if (offer[x.id]) return;
+        var r = refundsFor(x).filter(function (r) { return !refundOf[r.id] && (!exact || Math.abs(+x.amount + +r.amount) < 0.01); })[0];
+        if (r) { offer[x.id] = r; refundOf[r.id] = x; }
+      });
+    });
+    retItems.forEach(function (x) {
+      var late = retLate(x), hint = '';
+      if (offer[x.id]) {
+        var r = offer[x.id], whole = Math.abs(+x.amount + +r.amount) < 0.01;
+        hint = '<div class="q-hint link-hint"><span>Refund of <b>' + money(-r.amount) + '</b> came in' + (r.date ? ' ' + shortDate(r.date) : '') + ' (' + esc(r.item) + '). Is it the refund for this?</span>' +
+          (whole ? '<button class="qbtn on" data-act="retyes" data-id="' + esc(x.id) + '" data-r="' + esc(r.id) + '">Yes, take both off</button>' :
+            '<button class="qbtn on" data-act="retyes" data-id="' + esc(x.id) + '" data-r="' + esc(r.id) + '" title="The other ' + money(r2(+x.amount + +r.amount)) + ' counts as a normal charge again">Yes, that’s all of it</button>' +
+            '<button class="qbtn" data-act="retyes" data-more="1" data-id="' + esc(x.id) + '" data-r="' + esc(r.id) + '">Yes, more is coming</button>') +
+          '<button class="qbtn" data-act="retno" data-id="' + esc(x.id) + '" data-r="' + esc(r.id) + '">No</button></div>';
+      }
+      h += '<div class="row" data-charge="' + esc(x.id) + '"><div class="ret-line"><div><b>' + esc(x.item) + '</b> <span class="rchip' + (late ? ' late' : '') + '">' +
+        (late ? 'No refund after 30 days' : 'Returning') + '</span><div class="sub2">' + (x.date ? shortDate(x.date) + ' · ' : '') + 'marked ' + shortDate(retDate(x)) +
+        (x.who ? ' · ' + esc(x.who) : '') + '<button class="ret-btn" data-act="retclose" data-id="' + esc(x.id) + '">Close this return</button></div></div>' +
+        '<div class="num" style="color:var(--muted)">' + money(x.amount) + '</div></div>' + hint + '</div>';
+    });
+    h += '</div>';
+  }
   if (items.length) {
     h += '<div class="hrow g-charge"><div title="Check to put a charge on hold">Hold</div><div>Item</div><div class="r">Amount</div><div style="text-align:center">Who</div><div></div></div><div class="rows">';
     var typed = items.filter(function (y) { return !y.bankId; });
     items.forEach(function (x) {
       var dup = x.bankId && typed.some(function (y) { return Math.abs(y.amount - x.amount) < 0.005; });
       var info = (x.hold ? '<span class="hchip">on hold</span> ' : '') + (x.date ? shortDate(x.date) : '') + (x.bankId ? (x.date ? ' · ' : '') + 'from bank' : '') +
-        (dup ? ' · <span class="dup">same amount as one you typed. Repeat?</span>' : '');
+        (dup ? ' · <span class="dup">same amount as one you typed. Repeat?</span>' : '') +
+        (refundOf[x.id] ? ' · <span class="rchip">refund for ' + esc(refundOf[x.id].item) + '? Answer it above</span>' :
+          (+x.amount > 0 && !x.settled && !x.hold ? '<button class="ret-btn" data-act="retmark" data-id="' + esc(x.id) + '" title="Sending it back: stays on the card but stops counting until the refund comes in">↩ Returning</button>' : ''));
       h += '<div class="row g-charge' + (x.hold ? ' held' : x.who ? '' : ' needs') + '" data-charge="' + x.id + '">' +
         '<button class="holdbox' + (x.hold ? ' on' : '') + '" data-act="hold" data-id="' + x.id + '" title="' + (x.hold ? 'On hold. Click to count it again' : 'Put on hold (not counted, stays when you clear the card)') + '"></button>' +
         '<div>' + textCell('Charges', x.id, 'item', x.item) +
@@ -844,7 +918,7 @@ function sinceNudge(m) {
   var mm; try { mm = moneyMath(m); } catch (e) { return ''; }
   if (!mm.two || mm.lastT) return '';
   var cut = mm.cut, ids = [];
-  S.Charges.forEach(function (c) { if (!c.hold && !c.settled && c.date && c.date >= cut) ids.push('Charges:' + c.id); });
+  S.Charges.forEach(function (c) { if (counts(c) && !c.settled && c.date && c.date >= cut) ids.push('Charges:' + c.id); });
   (S.Pending || []).forEach(function (p) { if (!p.hold && p.date && p.date >= cut) ids.push('Pending:' + p.id); });
   if (!ids.length) return '';
   return '<div class="notice nudge"><span><b>' + ids.length + ' card charge' + (ids.length === 1 ? '' : 's') + ' since payday (' + shortDate(cut) + ').</b> Hold ' + (ids.length === 1 ? 'it' : 'them') +
@@ -883,7 +957,7 @@ function viewJoint(m) {
     '<button class="btn small" data-act="clearcash">Clear out-of-pocket</button></div>' : '') + '</section>';
 
   var cards = {}; S.Cards.forEach(function (c) { cards[c.id] = c; });
-  var jc = S.Charges.filter(function (c) { return c.who === 'Joint' && !c.hold; }).sort(newestFirst);
+  var jc = S.Charges.filter(function (c) { return c.who === 'Joint' && counts(c); }).sort(newestFirst);
   var jp = (S.Pending || []).filter(function (p) { return p.who === 'Joint'; });
   var line = function (c, pending) {
     var card = cards[c.cardId] || { name: '?', color: 'slate' };
@@ -1231,7 +1305,7 @@ function viewSearch() {
     h += '<div class="hrow g-res"><div>Charge</div><div class="c-card2">Card</div><div class="c-who">Who</div><div class="r">Amount</div></div><div class="rows">';
     now.slice(0, 200).forEach(function (x) {
       h += '<div class="row g-res"' + (x.isCash ? ' data-act="nav" data-v="joint"' : ' data-act="goto" data-id="' + x.id + '" data-card="' + x.cardId + '"') + ' title="Open">' +
-        '<div><div>' + hl(x.item, q) + (x.isPending ? '<span class="pchip">pending</span>' : '') + (x.hold ? '<span class="hchip">on hold</span>' : '') + '</div><div class="sub2">' + (x.date ? shortDate(x.date) + ' · ' : '') + '<span class="c-card-m">' + (x.cardId === 'cash' ? 'Out of pocket' : (find('Cards', x.cardId) || { name: 'Deleted card' }).name.replace(/[<>&]/g, '')) + '</span></div></div>' +
+        '<div><div>' + hl(x.item, q) + (x.isPending ? '<span class="pchip">pending</span>' : '') + (x.hold ? '<span class="hchip">on hold</span>' : '') + (x.ret ? '<span class="rchip">returning</span>' : '') + '</div><div class="sub2">' + (x.date ? shortDate(x.date) + ' · ' : '') + '<span class="c-card-m">' + (x.cardId === 'cash' ? 'Out of pocket' : (find('Cards', x.cardId) || { name: 'Deleted card' }).name.replace(/[<>&]/g, '')) + '</span></div></div>' +
         '<div class="c-card2">' + cardTag(x.cardId) + '</div>' +
         '<div class="c-who">' + (x.who ? '<span style="color:' + WHO_COLOR[x.who] + ';font-weight:700;font-size:12.5px">' + esc(x.who) + '</span>' : '<span class="badge warn">Who?</span>') + '</div>' +
         '<div class="r num' + (x.amount < 0 ? ' neg-txt' : '') + '">' + money(x.amount) + '</div></div>';
@@ -1448,7 +1522,7 @@ function moneyMath(m) {
   var used = {}, dupes = [], dupeOf = {}, lines = [];
   var cardName = function (id) { return (cardsById[id] || { name: 'Card' }).name; };
   S.Charges.forEach(function (c) {
-    if (!mine(c)) return;
+    if (!mine(c) || c.ret) return;                                   // being returned: not counted
     var st = String(c.settled || '');
     if (st && st.indexOf('ct:') !== 0) return;                      // filed with a past pay period
     if (!st) {
@@ -2406,6 +2480,42 @@ document.addEventListener('click', function (e) {
       toast('Out-of-pocket cleared <button class="toast-btn" data-act="undo">Undo</button>', 8000);
     });
   }
+  else if (a === 'retmark') {
+    var rc = find('Charges', id);
+    undoLabel = 'marking “' + rc.item + '” as returning';
+    upsert('Charges', { id: id, ret: today() }); render();
+    toast('“' + esc(rc.item) + '” is being returned. It stays on the card but isn’t counted. <button class="toast-btn" data-act="undo">Undo</button>', 6000);
+  }
+  else if (a === 'retyes') {
+    settleReturn(id, b.dataset.r, !!b.dataset.more); render();
+    toast('Refund matched. <button class="toast-btn" data-act="undo">Undo</button>', 6000);
+  }
+  else if (a === 'retno') {
+    var rn = find('Charges', id), no = Object.keys(retNo(rn)).concat([b.dataset.r]);
+    undoLabel = 'not matching a refund';
+    upsert('Charges', { id: id, ret: retDate(rn) + '|no=' + no.join(',') }); render();
+  }
+  else if (a === 'retclose') {
+    var rx = find('Charges', id);
+    var elr = modal('<h3>Close the return for “' + esc(rx.item) + '”?</h3><p>' + money(rx.amount) + ' on ' + esc((find('Cards', rx.cardId) || { name: 'the card' }).name) + '.</p>' +
+      '<div class="pick"><button class="btn" data-pick="count">It isn’t coming back: count it again</button>' +
+      '<button class="btn" data-pick="off">Refunded another way (store credit, gift card): take it off</button></div>' +
+      '<div class="mact"><button class="btn" data-m="no">Cancel</button></div>');
+    elr.onclick = function (e) {
+      var p = e.target.closest('[data-pick]');
+      if (p) {
+        closeModal();
+        if (p.dataset.pick === 'count') { undoLabel = 'counting “' + rx.item + '” again'; upsert('Charges', { id: id, ret: '' }); }
+        else {
+          undoLabel = 'closing the return for “' + rx.item + '”';
+          upsert('History', { id: rx.id, cardId: rx.cardId, item: rx.item + ' (returned)', amount: rx.amount, who: rx.who || '', date: rx.date || '', clearedOn: today() });
+          removeRow('Charges', id);
+        }
+        render(); toast('Done. <button class="toast-btn" data-act="undo">Undo</button>', 6000); return;
+      }
+      if (e.target.closest('[data-m="no"]') || e.target === elr) closeModal();
+    };
+  }
   else if (a === 'hold') {
     var ht = b.dataset.t || 'Charges', hc = find(ht, id);
     undoLabel = (hc.hold ? 'taking “' : 'putting “') + hc.item + (hc.hold ? '” off hold' : '” on hold');
@@ -2419,13 +2529,13 @@ document.addEventListener('click', function (e) {
   }
   else if (a === 'paid') { var c = find('Cards', id); undoLabel = 'marking ' + c.name + (c.paid ? ' unpaid' : ' paid'); upsert('Cards', { id: id, paid: !c.paid }); render(); }
   else if (a === 'clearcard') {
-    var cc = find('Cards', id), n = S.Charges.filter(function (x) { return x.cardId === id && !x.hold; }).length;
-    var nh = S.Charges.filter(function (x) { return x.cardId === id && x.hold; }).length;
+    var cc = find('Cards', id), n = S.Charges.filter(function (x) { return x.cardId === id && counts(x); }).length;
+    var nh = S.Charges.filter(function (x) { return x.cardId === id && !counts(x); }).length;
     confirmBox('Clear ' + cc.name + '?', 'This takes its ' + n + ' charge' + (n === 1 ? '' : 's') + ' off the card (search can still find them) and sets it back to unpaid.' +
-      (nh ? ' The ' + nh + ' on hold stay on the card.' : '') + ' Do this after you’ve paid the card.', 'Clear charges', function () {
+      (nh ? ' The ' + nh + ' on hold or being returned stay on the card.' : '') + ' Do this after you’ve paid the card.', 'Clear charges', function () {
       undoLabel = 'clearing ' + cc.name;
       var day = today();
-      var toClear = S.Charges.filter(function (x) { return x.cardId === id && !x.hold; });
+      var toClear = S.Charges.filter(function (x) { return x.cardId === id && counts(x); });
       if ((S.Checking || []).length || setting('cardLedger', null) !== null) {
         var mmx = moneyMath(calc()), led = mmx.ledger.slice(), dup = {}; mmx.dupes.forEach(function (d) { dup[d] = 1; });
         toClear.forEach(function (x) {

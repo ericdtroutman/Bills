@@ -24,6 +24,7 @@ Eric's family budget app. The page (index.html) is served by GitHub Pages from m
 - New Sheet columns go at the **end** of a table in `TABLES`; `sheet_()` adds missing headers on its own.
 - **Setup runs only when it has to** (Oct 31, 2026): tab/header/trigger checks run when `TABLES` or `SYNC_SCHEDULE` change (a stamp in Script Properties, `SETUP_STAMP`) and once a day with the bank sync. If you change setup in any other way (a new trigger, new first-run data), bump `SETUP_REV` in Code.js.
 - **Saving reads each tab once per request** and then writes row by row (`tab_()`); anything that writes a tab another way (`appendRows_`, `rewriteTable_`, `deleteRows`) must `delete TAB_[name]`. Appends make room first (`room_()`): a tab starts with 1,000 rows and writing past the last row fails.
+- **Returns** (Oct 31, 2026): Charges `ret` = the date a charge was marked Returning (+ `|no=<refund ids>` Eric said aren't its refund). A returning charge stays on its card but counts nowhere (`counts()` in index.html; moneyMath skips it; clearing a card leaves it). `refundsFor()` / `settleReturn()` match the refund; both go to History. Tests: the Returns scenario in tests.html.
 - Remind Eric to tap **Back up** in the app before a change that touches the Sheet's structure.
 - Don't ship on a Friday payday or during the pay-period overlap without saying so.
 - Plans and history live in the claude.ai project "Comprehensive Budget and Family Planning App" (My Money - project context.md, My Money - roadmap.md).

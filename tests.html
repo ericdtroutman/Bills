@@ -421,6 +421,52 @@ SCENARIOS.push({
   ]
 });
 
+SCENARIOS.push({
+  title: 'Returns: a charge being sent back doesn\'t count, and comes off with its refund',
+  about: 'Eric marks the $500 Target charge (his) as Returning, the $500 refund comes in from the bank, and he says it\'s the refund. Then a $100 return gets only $60 back.',
+  needs: 'settleReturn',
+  data: startingData(),
+  steps: [
+    { t: 'Mark the $500 Target charge as Returning', run: function () {
+        var c = A.calc(); SCENARIOS[SCENARIOS.length - 1].base = { eric: c.eric, cards: c.onCards, owed: mm().owed };
+        A.document.body.insertAdjacentHTML('beforeend', '<button id="t_ret" data-act="retmark" data-id="ch_eric"></button>');
+        A.document.getElementById('t_ret').click();
+      }, check: function () {
+        var b = SCENARIOS[SCENARIOS.length - 1].base, c = A.calc();
+        return [yes('It stays on the card', !!A.find('Charges', 'ch_eric')),
+          money('Eric owes $500 less', b.eric - 500, c.eric), money('Total on the cards drops $500', b.cards - 500, c.onCards),
+          money('Not in Eric\'s card share', b.owed - 500, mm().owed), says('Cards page shows it', 'Being returned', pageText('Cards')), pagesDraw()]; } },
+    { t: 'The $500 refund comes in from the bank', run: function () {
+        A.S.Charges.push({ id: 'ch_refund', cardId: 'c_amex', item: 'TARGET', amount: -500, who: '', order: 50, date: '2026-10-25', bankId: 'x9', hold: false, settled: '' });
+      }, check: function () {
+        var f = A.refundsFor(A.find('Charges', 'ch_eric'));
+        return [yes('The app spots it as the refund', f.length === 1 && f[0].id === 'ch_refund', f.length + ' found'), says('and asks', 'Is it the refund for this?', pageText('Cards'))]; } },
+    { t: 'Eric taps "Yes, take both off"', run: function () { A.settleReturn('ch_eric', 'ch_refund', false); },
+      check: function () {
+        var b = SCENARIOS[SCENARIOS.length - 1].base, c = A.calc();
+        return [yes('Both are off the card', !A.find('Charges', 'ch_eric') && !A.find('Charges', 'ch_refund')),
+          money('Eric still owes $500 less', b.eric - 500, c.eric), money('Total on the cards: down $500, nothing else', b.cards - 500, c.onCards),
+          money('Card share unchanged since marking it', b.owed - 500, mm().owed), pagesDraw()]; } },
+    { t: 'Undo puts both back', run: function () { A.undo(); },
+      check: function () { return [yes('Charge and refund are back', !!A.find('Charges', 'ch_eric') && !!A.find('Charges', 'ch_refund'))]; } },
+    { t: 'A $100 Split return gets only $60 back ("that\'s all of it")', run: function () {
+        A.S.Charges.push({ id: 'ch_r100', cardId: 'c_chase', item: 'SHOES', amount: 100, who: 'Split', order: 60, date: '2026-10-20', bankId: 'x10', hold: false, settled: '', ret: '2026-10-21' });
+        A.S.Charges.push({ id: 'ch_r60', cardId: 'c_chase', item: 'SHOES REFUND', amount: -60, who: '', order: 61, date: '2026-10-26', bankId: 'x11', hold: false, settled: '' });
+        SCENARIOS[SCENARIOS.length - 1].e0 = A.calc().eric;
+        A.settleReturn('ch_r100', 'ch_r60', false);
+      }, check: function () {
+        var c = A.find('Charges', 'ch_r100');
+        return [money('The $40 left is a normal charge again', 40, c && c.amount), yes('No longer marked Returning', c && !c.ret),
+          money('Eric\'s half of it counts: $20', SCENARIOS[SCENARIOS.length - 1].e0 + 20, A.calc().eric), yes('The refund is off', !A.find('Charges', 'ch_r60'))]; } },
+    { t: 'Clearing a card leaves a return on it', run: function () {
+        A.S.Charges.push({ id: 'ch_r7', cardId: 'c_chase', item: 'LAMP', amount: 70, who: 'Joint', order: 70, date: '2026-10-22', bankId: 'x12', hold: false, settled: '', ret: '2026-10-23' });
+        A.confirmBox = function (t, x, ok, cb) { cb(); };
+        A.document.body.insertAdjacentHTML('beforeend', '<button id="t_clr" data-act="clearcard" data-id="c_chase"></button>');
+        A.document.getElementById('t_clr').click();
+      }, check: function () { return [yes('The lamp is still on the card', !!A.find('Charges', 'ch_r7')), yes('The rest was cleared', !A.find('Charges', 'ch_split'))]; } }
+  ]
+});
+
 /* ---------------------------------------------------------------- run and show */
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
