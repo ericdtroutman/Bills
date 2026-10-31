@@ -469,8 +469,11 @@
 
 <script>
 /* ======================================================================= basics */
-var WHO = ['Joint', 'Eric', 'Arianna', 'Split', 'Bills', 'Savings'];
-var WHO_COLOR = { Joint: '#E8590C', Eric: '#1C7ED6', Arianna: '#D6336C', Split: '#7048E8', Bills: '#495057', Savings: '#2B8A3E' };
+var WHO = ['Joint', 'Eric', 'Arianna', 'Split', 'Eric + Joint', 'Bills', 'Savings'];
+var WHO_COLOR = { Joint: '#E8590C', Eric: '#1C7ED6', Arianna: '#D6336C', Split: '#7048E8', 'Eric + Joint': '#0C8599', Bills: '#495057', Savings: '#2B8A3E' };
+/* Split = half Eric, half Arianna. "Eric + Joint" (Oct 31, 2026) = half Eric, half paid by the joint (e.g. Google One). */
+var EJ = 'Eric + Joint';
+function halfMine(who) { return who === 'Split' || who === EJ; }
 var PALETTE = { blue: '#4C6EF5', violet: '#845EF7', green: '#37B24D', orange: '#F76707', rose: '#E64980',
                 slate: '#868E96', teal: '#1098AD', gold: '#F59F00' };
 var S = null;                       // all data
@@ -648,7 +651,7 @@ function pendingMath() {
   var P = S.Pending || [], by = {};
   WHO.forEach(function (w) { by[w] = sum(P.filter(function (p) { return p.who === w; }), function (p) { return p.amount; }); });
   return { all: sum(P, function (p) { return p.amount; }), n: P.length,
-           eric: by.Eric + by.Split / 2, arianna: by.Arianna + by.Split / 2, joint: by.Joint,
+           eric: by.Eric + by.Split / 2 + by[EJ] / 2, arianna: by.Arianna + by.Split / 2, joint: by.Joint + by[EJ] / 2,
            unlabeled: P.filter(function (p) { return WHO.indexOf(p.who) < 0; }).length };
 }
 function calc() {
@@ -669,9 +672,9 @@ function calc() {
     needN: live.filter(function (c) { return WHO.indexOf(c.who) < 0; }).length,
     held: S.Charges.filter(function (c) { return c.hold; }),
     pend: pendingMath(),
-    eric: tag.Eric + tag.Split / 2, arianna: tag.Arianna + tag.Split / 2,
+    eric: tag.Eric + tag.Split / 2 + tag[EJ] / 2, arianna: tag.Arianna + tag.Split / 2, jointCards: tag.Joint + tag[EJ] / 2,
     inJoint: inJoint, cash: sum(S.JointCash || [], function (j) { return j.amount; }),
-    jointBank: jb, jointLeft: inJoint - tag.Joint - sum(S.JointCash || [], function (j) { return j.amount; }) - jb.spend,
+    jointBank: jb, jointLeft: inJoint - tag.Joint - tag[EJ] / 2 - sum(S.JointCash || [], function (j) { return j.amount; }) - jb.spend,
     us1: us1, us15: us15, tot1: sum(b1, function (b) { return b.total; }), tot15: sum(b15, function (b) { return b.total; }),
     ourTotal: ourTotal, half: half, paycheck: half / 2, bank: half - us15,
     ferris: sum(S.Bills, function (b) { return b.total; }) - ourTotal,
@@ -745,7 +748,7 @@ function viewCards(m) {
   if (!cards.some(function (c) { return c.id === selCard; })) selCard = cards.length ? cards[0].id : null;
   var h = '<h1>Cards</h1><p class="sub">Tag each charge with who it belongs to. Everything adds up on its own.</p>';
   h += '<div class="tiles">' +
-    tile('Eric owes', m.eric, { hint: m.pend.eric ? 'With pending: ' + money(m.eric + m.pend.eric) : 'His charges + half of Split' }) +
+    tile('Eric owes', m.eric, { hint: m.pend.eric ? 'With pending: ' + money(m.eric + m.pend.eric) : 'His charges + half of Split and Eric + Joint' }) +
     tile('Arianna owes', m.arianna, { hint: m.pend.arianna ? 'With pending: ' + money(m.arianna + m.pend.arianna) : 'Her charges + half of Split' }) +
     tile('Joint money left', m.jointLeft, { sign: true, act: 'joint', hint: m.pend.joint ? 'After pending: ' + money(m.jointLeft - m.pend.joint) : 'Tap to change what’s in the joint' }) +
     tile('Bills on cards', m.tag.Bills, { hint: 'Already in the monthly budget' }) +
@@ -849,10 +852,10 @@ function sinceNudge(m) {
 }
 
 function viewJoint(m) {
-  var jb = m.jointBank, spent = m.tag.Joint + m.cash + jb.spend, acct = jointAcct();
+  var jb = m.jointBank, spent = m.jointCards + m.cash + jb.spend, acct = jointAcct();
   var h = '<h1>Joint Account</h1><p class="sub">What’s in the joint, minus joint charges on the cards, debit spending from joint checking, and anything paid out of pocket.</p>';
   h += '<div class="tiles">' + tile('In the joint account', m.inJoint) +
-    tile('Spent from the joint', spent, { hint: money(m.tag.Joint) + ' on cards · ' + (acct ? money(jb.spend) + ' debit · ' : '') + money(m.cash) + ' out of pocket' }) +
+    tile('Spent from the joint', spent, { hint: money(m.jointCards) + ' on cards · ' + (acct ? money(jb.spend) + ' debit · ' : '') + money(m.cash) + ' out of pocket' }) +
     tile('Left', m.jointLeft, { sign: true, hint: m.pend.joint ? 'After pending: ' + money(m.jointLeft - m.pend.joint) : '' }) +
     (acct ? tile('Joint checking at the bank', acct.balance, { hint: jb.ask ? jb.ask + ' line' + (jb.ask === 1 ? ' needs' : 's need') + ' an answer' : 'Holds bill money too', warn: !!jb.ask }) : '') + '</div>';
   h += jointBankPanel(jb);
@@ -1437,9 +1440,9 @@ function moneyMath(m) {
   var lastT = '';
   if (two) open.forEach(function (r) { if (r.kind === 'cards' && potOfRow(r) === 'old' && String(r.date) > lastT) lastT = String(r.date); });
 
-  // ---- your card charges (Eric + half of Split), posted, pending, and remembered
-  var mine = function (c) { return c.who === 'Eric' || c.who === 'Split'; };
-  var share = function (c) { return c.who === 'Split' ? c.amount / 2 : +c.amount; };
+  // ---- your card charges (Eric + half of Split / Eric + Joint), posted, pending, and remembered
+  var mine = function (c) { return c.who === 'Eric' || halfMine(c.who); };
+  var share = function (c) { return halfMine(c.who) ? c.amount / 2 : +c.amount; };
   var livePend = {}; (S.Pending || []).forEach(function (p) { livePend[p.bankId] = true; });
   var ledByBank = {}; led.forEach(function (e) { if (e.bankId) ledByBank[e.bankId] = e; });
   var used = {}, dupes = [], dupeOf = {}, lines = [];
@@ -1456,12 +1459,12 @@ function moneyMath(m) {
         }
       }
     }
-    lines.push({ id: c.id, src: 'charge', name: c.item, date: c.date || '', amount: share(c), full: +c.amount, split: c.who === 'Split',
+    lines.push({ id: c.id, src: 'charge', name: c.item, date: c.date || '', amount: share(c), full: +c.amount, split: halfMine(c.who),
                  from: cardName(c.cardId), cardId: c.cardId, hold: !!c.hold, cover: st ? st.slice(3) : '', pending: false });
   });
   (S.Pending || []).forEach(function (p) {
     if (!mine(p) || ledByBank[p.bankId]) return;
-    lines.push({ id: p.id, src: 'pending', name: p.item, date: p.date || '', amount: share(p), full: +p.amount, split: p.who === 'Split',
+    lines.push({ id: p.id, src: 'pending', name: p.item, date: p.date || '', amount: share(p), full: +p.amount, split: halfMine(p.who),
                  from: cardName(p.cardId), cardId: p.cardId, bankId: p.bankId, hold: !!p.hold, cover: '', pending: true });
   });
   led.forEach(function (e) {
@@ -1532,7 +1535,7 @@ function coverFor(rowId) {
     else if (l.src === 'pending') {
       var p = find('Pending', l.id);
       led.push({ id: uid('lg'), src: 'pending', cardId: p.cardId, bankId: p.bankId, item: p.item, date: p.date || '', full: +p.amount, mine: l.amount,
-                 split: p.who === 'Split', cover: rowId, pid: '', on: today() });
+                 split: halfMine(p.who), cover: rowId, pid: '', on: today() });
     } else led.forEach(function (e) { if (e.id === l.id) e.cover = rowId; });
   });
   var rest = r2(A - covered);
@@ -1777,7 +1780,7 @@ function viewMoney(m) {
   h += '<div class="tiles">' + tile('Really yours', mm.really, { sign: true, hint: 'Your M&T balance minus everything that isn’t free to spend' });
   if (mm.two) h += tile('Left from last pay period', mm.oldPot, { sign: true, hint: 'Goes to savings when you wrap up' }) +
     tile('This pay period', mm.newPot, { sign: true, hint: 'Since your ' + shortDate(mm.newest.date) + ' paycheck' });
-  else h += tile('M&T says', mm.bal, { hint: 'Balance from the bank' }) + tile('Owe on the cards', mm.owedNet, { hint: 'Your charges + half of Split, pending too' });
+  else h += tile('M&T says', mm.bal, { hint: 'Balance from the bank' }) + tile('Owe on the cards', mm.owedNet, { hint: 'Your charges + your half of split ones, pending too' });
   if (waitingN) h += tile('Waiting for the bank', mm.waitOut, { hint: waitingN + ' typed-in entr' + (waitingN === 1 ? 'y' : 'ies') });
   if (Math.abs(mm.passSit) > 0.009) h += '<div class="tile"><div class="lbl">Card money still to go out</div><div class="val num">' + money(mm.passSit) + '</div>' +
     '<div class="hint warn">Not yours. Card payments take it down.</div>' +
@@ -2427,9 +2430,9 @@ document.addEventListener('click', function (e) {
         var mmx = moneyMath(calc()), led = mmx.ledger.slice(), dup = {}; mmx.dupes.forEach(function (d) { dup[d] = 1; });
         toClear.forEach(function (x) {
           var st = String(x.settled || '');
-          if (!(x.who === 'Eric' || x.who === 'Split') || dup[x.id] || (st && st.indexOf('ct:') !== 0)) return;
+          if (!(x.who === 'Eric' || halfMine(x.who)) || dup[x.id] || (st && st.indexOf('ct:') !== 0)) return;
           led.push({ id: uid('lg'), src: 'cleared', cardId: id, bankId: '', item: x.item, date: x.date || '', full: +x.amount,
-                     mine: x.who === 'Split' ? x.amount / 2 : +x.amount, split: x.who === 'Split', cover: st ? st.slice(3) : '', pid: '', on: today() });
+                     mine: halfMine(x.who) ? x.amount / 2 : +x.amount, split: halfMine(x.who), cover: st ? st.slice(3) : '', pid: '', on: today() });
         });
         saveLedger(led);
       }

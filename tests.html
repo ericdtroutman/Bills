@@ -380,6 +380,26 @@ SCENARIOS.push({
 });
 
 SCENARIOS.push({
+  title: 'Eric + Joint charges (half Eric, half the joint)',
+  about: 'A $20 Google One charge labeled Eric + Joint: $10 goes on Eric\'s card share, $10 comes off the joint\'s Left, and none of it lands on Arianna (Split stays half Eric, half Arianna).',
+  needs: 'halfMine',
+  data: startingData(),
+  steps: [
+    { t: 'Add a $20 Google One charge labeled Eric + Joint', run: function () {
+        var c = A.calc(); SCENARIOS[SCENARIOS.length - 1].base = { eric: c.eric, arianna: c.arianna, left: c.jointLeft, share: mm().owed };
+        A.S.Charges.push({ id: 'ch_g1', cardId: A.S.Cards[0].id, item: 'Google One', amount: 20, who: 'Eric + Joint', order: 999, date: '2026-10-27', hold: false });
+      }, check: function () {
+        var b = SCENARIOS[SCENARIOS.length - 1].base, c = A.calc(), m = mm(), out = [
+          money('Eric owes $10 more', b.eric + 10, c.eric),
+          money('Arianna owes nothing more', b.arianna, c.arianna),
+          money('The joint\'s Left drops by $10', b.left - 10, c.jointLeft),
+          yes('Nothing is left unlabeled', c.untagged === 0, 'untagged ' + c.untagged), pagesDraw()];
+        out.push(money('Owed on the cards goes up $10', b.share + 10, m.owed));
+        return out; } }
+  ]
+});
+
+SCENARIOS.push({
   title: 'The preview can\'t save',
   about: 'Pretends to be the preview copy and tries to save, back up and sync. None of it may reach Google.',
   data: startingData(),
