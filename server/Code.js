@@ -159,13 +159,17 @@ function backupNow() {
 
 /* ---------------------------------------------------------------- storage helpers */
 
+var SS_ = null, SH_ = null, CHECKED_ = {}, TAB_ = {}, MAXR_ = {};   // this request's memory of the Sheet (Apps Script starts fresh on every request)
+
 function ss_() {
-  return SpreadsheetApp.getActiveSpreadsheet();
+  return SS_ || (SS_ = SpreadsheetApp.getActiveSpreadsheet());
 }
 
+/* Every tab is looked up in one trip. The header check only runs when setup isn't current, and once per tab per request. */
 function sheet_(name) {
-  var ss = ss_();
-  var sh = ss.getSheetByName(name);
+  if (!SH_) { SH_ = {}; ss_().getSheets().forEach(function (s) { SH_[s.getName()] = s; }); }
+  var sh = SH_[name];
+  if (sh && (CHECKED_[name] || setupCurrent_())) return sh;
   if (sh) {
     // newer versions of the app may add columns at the end; add any missing headers
     var cols0 = TABLES[name];
@@ -177,7 +181,7 @@ function sheet_(name) {
       });
     }
   } else {
-    sh = ss.insertSheet(name);
+    sh = ss_().insertSheet(name);
     var cols = TABLES[name];
     sh.getRange(1, 1, 1, cols.length).setValues([cols]).setFontWeight('bold').setBackground('#EEF1F5');
     sh.setFrozenRows(1);
@@ -185,24 +189,26 @@ function sheet_(name) {
     cols.forEach(function (c, i) {
       if (TEXT_FIELDS[c]) sh.getRange(1, i + 1, sh.getMaxRows(), 1).setNumberFormat('@');
     });
+    SH_[name] = sh;
   }
+  CHECKED_[name] = true;
   return sh;
 }
 
+/* One read per tab (it used to take two, plus a header check). */
 function readTable_(name) {
   var sh = sheet_(name);
   var cols = TABLES[name];
-  var last = sh.getLastRow();
-  if (last < 2) return [];
-  var values = sh.getRange(2, 1, last - 1, cols.length).getValues();
+  var values = sh.getDataRange().getValues();
   var rows = [];
-  values.forEach(function (v) {
-    if (v[0] === '' || v[0] === null) return;
+  for (var r = 1; r < values.length; r++) {
+    var v = values[r];
+    if (v[0] === '' || v[0] === null || v[0] === undefined) continue;
     var o = {};
     cols.forEach(function (c, i) { o[c] = clean_(c, v[i]); });
     if (name === 'Bills' && !o.status && o.paid) o.status = 'paid';
     rows.push(o);
-  });
+  }
   return rows;
 }
 
@@ -233,62 +239,91 @@ function toCell_(field, v) {
   return v;
 }
 
-function findRow_(sh, id) {
-  var last = sh.getLastRow();
-  if (last < 2) return -1;
-  var ids = sh.getRange(2, 1, last - 1, 1).getValues();
-  for (var i = 0; i < ids.length; i++) if (String(ids[i][0]) === id) return i + 2;
-  return -1;
+/*
+ * Saving: the first change to a tab in a request reads that tab once and remembers where each id is. After that
+ * every change is a single write, with no re-reading (before, each change re-read the whole id column and its row).
+ * Apps Script sends writes in batches, so many changes in one save go out together.
+ */
+function tab_(name) {
+  var t = TAB_[name];
+  if (t) return t;
+  var sh = sheet_(name), cols = TABLES[name];
+  var values = sh.getDataRange().getValues().slice(1).map(function (v) {
+    v = v.slice(0, cols.length);
+    while (v.length < cols.length) v.push('');
+    return v;
+  });
+  t = TAB_[name] = { sh: sh, cols: cols, values: values, at: {} };
+  index_(t);
+  return t;
 }
+function index_(t) {
+  t.at = {};
+  t.values.forEach(function (v, i) {
+    var id = String(v[0]);
+    if (v[0] !== '' && v[0] !== null && !(id in t.at)) t.at[id] = i;   // the first row with an id wins, as before
+  });
+}
+
+/* A tab starts with 1,000 rows; writing past the last one fails, so add room first (200 rows at a time). */
+function room_(sh, lastRow) {
+  var k = sh.getName();
+  if (!MAXR_[k]) MAXR_[k] = sh.getMaxRows();
+  if (lastRow <= MAXR_[k]) return;
+  var add = lastRow - MAXR_[k] + 200;
+  sh.insertRowsAfter(MAXR_[k], add);
+  MAXR_[k] += add;
+}
+function rowsGone_(sh, n) { var k = sh.getName(); if (MAXR_[k]) MAXR_[k] -= n; }
 
 function upsert_(name, row) {
   if (!row || !row.id) throw new Error('Row needs an id');
-  var sh = sheet_(name);
-  var cols = TABLES[name];
-  var r = findRow_(sh, String(row.id));
-  if (r > 0) {
-    var current = sh.getRange(r, 1, 1, cols.length).getValues()[0];
-    var merged = cols.map(function (c, i) { return c in row ? toCell_(c, row[c]) : current[i]; });
-    sh.getRange(r, 1, 1, cols.length).setValues([merged]);
+  var t = tab_(name), cols = t.cols, i = t.at[String(row.id)];
+  if (i !== undefined) {
+    var current = t.values[i];
+    var merged = cols.map(function (c, k) { return c in row ? toCell_(c, row[c]) : current[k]; });
+    t.sh.getRange(i + 2, 1, 1, cols.length).setValues([merged]);
+    t.values[i] = merged;
   } else {
-    sh.appendRow(cols.map(function (c) { return toCell_(c, row[c]); }));
+    var fresh = cols.map(function (c) { return toCell_(c, row[c]); });
+    var at = t.values.length + 2;
+    room_(t.sh, at);
+    t.sh.getRange(at, 1, 1, cols.length).setValues([fresh]);
+    t.values.push(fresh);
+    t.at[String(row.id)] = t.values.length - 1;
   }
 }
 
 function remove_(name, id) {
-  var sh = sheet_(name);
-  var r = findRow_(sh, id);
-  if (r > 0) sh.deleteRow(r);
+  var t = tab_(name), i = t.at[String(id)];
+  if (i === undefined) return;
+  t.sh.deleteRow(i + 2);
+  rowsGone_(t.sh, 1);
+  t.values.splice(i, 1);
+  index_(t);
 }
 
-/** Deletes many rows by id in one read and one write. */
+/* Rewrites the rows that stay in one write, however many go. */
+function keepOnly_(t, keep) {
+  if (keep.length === t.values.length) return;
+  t.sh.getRange(2, 1, t.values.length, t.cols.length).clearContent();
+  if (keep.length) t.sh.getRange(2, 1, keep.length, t.cols.length).setValues(keep);
+  t.values = keep;
+  index_(t);
+}
+
+/** Deletes many rows by id. */
 function removeIds_(name, ids) {
   if (!ids.length) return;
   var drop = {}; ids.forEach(function (i) { drop[String(i)] = true; });
-  var sh = sheet_(name), cols = TABLES[name], last = sh.getLastRow();
-  if (last < 2) return;
-  var range = sh.getRange(2, 1, last - 1, cols.length);
-  var values = range.getValues();
-  var keep = values.filter(function (v) { return !drop[String(v[0])]; });
-  if (keep.length === values.length) return;
-  range.clearContent();
-  if (keep.length) sh.getRange(2, 1, keep.length, cols.length).setValues(keep);
+  var t = tab_(name);
+  keepOnly_(t, t.values.filter(function (v) { return !drop[String(v[0])]; }));
 }
 
 function removeWhere_(name, field, value) {
-  var sh = sheet_(name);
-  var cols = TABLES[name];
-  var k = cols.indexOf(field);
+  var t = tab_(name), k = t.cols.indexOf(field);
   if (k < 0) throw new Error('Unknown field: ' + field);
-  var last = sh.getLastRow();
-  if (last < 2) return;
-  var range = sh.getRange(2, 1, last - 1, cols.length);
-  var values = range.getValues();
-  var keep = values.filter(function (v) { return String(v[k]) !== String(value); });
-  if (keep.length === values.length) return;
-  // rewrite the table in one go: one read and one write, however many rows go
-  range.clearContent();
-  if (keep.length) sh.getRange(2, 1, keep.length, cols.length).setValues(keep);
+  keepOnly_(t, t.values.filter(function (v) { return String(v[k]) !== String(value); }));
 }
 
 /* ---------------------------------------------------------------- automatic backups */
@@ -397,6 +432,7 @@ function ensureSyncTrigger_() {
 }
 
 function dailyBankSync() {
+  try { ensureSetup_(true); } catch (e) { console.error('Setup check failed: ' + (e.message || e)); }
   try { syncBank_('Automatic'); }
   catch (e) { setSetting_('lastSyncMsg', 'Sync failed: ' + (e.message || e)); }
 }
@@ -471,7 +507,7 @@ function logSync_(data, how, added, cardFor, nowStamp) {
   }).join('  |  ');
   appendRows_('SyncLog', [{ id: 'sync_' + Date.now(), at: nowStamp, how: how || 'Automatic', added: added, banks: banks }]);
   var sh = sheet_('SyncLog'), extra = sh.getLastRow() - 1 - 500;
-  if (extra > 0) sh.deleteRows(2, extra);
+  if (extra > 0) { sh.deleteRows(2, extra); rowsGone_(sh, extra); delete TAB_.SyncLog; }
 }
 
 function syncBank_(how) {
@@ -676,6 +712,7 @@ function fillOther_(partners) {
 
 /** Replaces everything in a tab (below the header) with these rows. */
 function rewriteTable_(table, rows) {
+  delete TAB_[table];
   var sh = sheet_(table), cols = TABLES[table], last = sh.getLastRow();
   if (last >= 2) sh.getRange(2, 1, last - 1, cols.length).clearContent();
   appendRows_(table, rows);
@@ -683,14 +720,35 @@ function rewriteTable_(table, rows) {
 
 function appendRows_(table, rows) {
   if (!rows.length) return;
+  delete TAB_[table];
   var sh = sheet_(table), cols = TABLES[table];
   var data = rows.map(function (r) { return cols.map(function (c) { return toCell_(c, r[c]); }); });
-  sh.getRange(sh.getLastRow() + 1, 1, data.length, cols.length).setValues(data);
+  var at = sh.getLastRow() + 1;
+  room_(sh, at + data.length - 1);
+  sh.getRange(at, 1, data.length, cols.length).setValues(data);
 }
 
 /* ---------------------------------------------------------------- first run */
 
-function ensureSetup_() {
+/*
+ * Setup (tabs, headers, triggers, first-run data) used to run on every open, which alone took 40+ trips to the Sheet.
+ * Now it runs only when TABLES or SYNC_SCHEDULE change (or SETUP_REV is bumped), plus once a day with the bank sync
+ * so a tab or trigger removed by hand still comes back (Oct 31, 2026).
+ */
+var SETUP_REV = 1;
+var SETUP_OK_ = null;
+function setupStamp_() {
+  var bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, JSON.stringify([SETUP_REV, SYNC_SCHEDULE, TABLES]));
+  return Utilities.base64Encode(bytes);
+}
+function setupCurrent_() {
+  if (SETUP_OK_ === null) SETUP_OK_ = props_().getProperty('SETUP_STAMP') === setupStamp_();
+  return SETUP_OK_;
+}
+
+function ensureSetup_(force) {
+  if (!force && setupCurrent_()) return;
+  SETUP_OK_ = false;
   Object.keys(TABLES).forEach(sheet_);
   ensureBackupTrigger_();
   if (props_().getProperty('SIMPLEFIN_ACCESS') && props_().getProperty('SYNC_AT') !== SYNC_SCHEDULE) ensureSyncTrigger_();
@@ -700,6 +758,8 @@ function ensureSetup_() {
     seed_();
     upsert_('Settings', { id: 'seeded', value: 'yes' });
   }
+  props_().setProperty('SETUP_STAMP', setupStamp_());
+  SETUP_OK_ = true;
 }
 
 function seed_() {
@@ -709,7 +769,8 @@ function seed_() {
     var sh = sheet_(table);
     var cols = TABLES[table];
     var data = rows.map(function (r) { return cols.map(function (c) { return toCell_(c, r[c]); }); });
-    if (data.length) sh.getRange(sh.getLastRow() + 1, 1, data.length, cols.length).setValues(data);
+    delete TAB_[table];
+    if (data.length) { var at = sh.getLastRow() + 1; room_(sh, at + data.length - 1); sh.getRange(at, 1, data.length, cols.length).setValues(data); }
   }
 
   // Cards and their charges
