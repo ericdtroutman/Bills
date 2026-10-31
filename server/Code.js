@@ -207,7 +207,12 @@ function readTable_(name) {
 }
 
 function clean_(field, v) {
-  if (v instanceof Date) v = Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  // A cell Sheets turned into a date. Keep the time when there is one (e.g. Settings lastSync), or the page
+  // reads a bare date as midnight UTC and shows 8 PM the evening before (fixed Oct 31, 2026).
+  if (v instanceof Date) {
+    var tz = Session.getScriptTimeZone();
+    v = Utilities.formatDate(v, tz, Utilities.formatDate(v, tz, 'HH:mm') === '00:00' ? 'yyyy-MM-dd' : "yyyy-MM-dd'T'HH:mm");
+  }
   if (NUMBER_FIELDS[field]) {
     var n = parseFloat(v);
     return isNaN(n) ? 0 : n;
