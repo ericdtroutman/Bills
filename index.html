@@ -2006,9 +2006,11 @@ function viewBank() {
     (msg ? '<div class="notice bad">' + esc(msg) + '</div>' : '') +
     '<div class="hrow g-acct"><div>Account <span style="text-transform:none;letter-spacing:0;font-weight:600">· tap a name to rename it</span></div><div class="r c-bal">Balance</div><div>Goes to card</div></div><div class="rows">';
   var cards = S.Cards.slice().sort(byOrder);
+  var staleSet = {}; try { staleBanks().forEach(function (x) { staleSet[x.bank] = 1; }); } catch (e) { console.error(e); }
   h += accts.length ? accts.map(function (a) {
     return '<div class="row g-acct"><div>' + textCell('BankAccounts', a.id, 'nick', a.nick || '', a.name, 'acct-nick') +
-      '<div class="acct-bank">' + (a.nick ? esc(a.name) + ' · ' : '') + esc(a.bank) + '</div></div>' +
+      '<div class="acct-bank">' + (a.nick ? esc(a.name) + ' · ' : '') + esc(a.bank) +
+      (a.bankAsOf ? ' · <span' + (staleSet[a.bank || a.name] ? ' style="color:var(--bad);font-weight:700"' : '') + '>updated ' + esc(a.bankAsOf) + '</span>' : '') + '</div></div>' +
       '<div class="r num c-bal">' + money(a.balance) + '</div>' +
       '<select data-t="BankAccounts" data-id="' + esc(a.id) + '" data-f="cardId"><option value="">Don’t import</option>' +
       '<option value="checking"' + (a.cardId === 'checking' ? ' selected' : '') + '>My M&amp;T checking (My Money)</option>' +
@@ -2206,12 +2208,61 @@ function lrChange(el) {
   undoLabel = 'editing Long range'; lrSet(lr); render();
 }
 
+/* ======================================================================= stale bank warning
+   SimpleFIN stamps each account with when it last heard from that bank ("Tue Oct 27 · 3:20 PM").
+   If a bank (Chase, Ally, ...) hasn't refreshed in STALE_HOURS, or the app's own daily sync hasn't run,
+   every page shows a banner. Added Oct 31, 2026 after Chase and Ally went quiet for 4 days unnoticed. */
+var STALE_HOURS = 36;
+function parseStamp(t) {
+  var m = /^\w{3} (\w{3}) (\d{1,2}) · (\d{1,2}):(\d{2}) (AM|PM)$/.exec(String(t || '').trim());
+  if (!m) return null;
+  var now = new Date(), h = (+m[3]) % 12 + (m[5] === 'PM' ? 12 : 0);
+  var d = new Date(m[1] + ' ' + m[2] + ', ' + now.getFullYear() + ' ' + h + ':' + m[4]);
+  if (isNaN(d)) return null;
+  if (d - now > 7 * 864e5) d.setFullYear(d.getFullYear() - 1);   // a December stamp read in January
+  return d;
+}
+function parseLastSync(v) {
+  if (!v) return null;
+  var d = new Date(v); if (!isNaN(d)) return d;
+  var m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})/.exec(String(v));
+  return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) : null;
+}
+function shortWhen(d) { return d.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+/* [{bank, since}] for each bank whose newest account stamp is too old, oldest first */
+function staleBanks() {
+  var newest = {}, now = Date.now();
+  (S.BankAccounts || []).forEach(function (a) {
+    var d = parseStamp(a.bankAsOf); if (!d) return;
+    var b = a.bank || a.name;
+    if (!newest[b] || d > newest[b]) newest[b] = d;
+  });
+  return Object.keys(newest).filter(function (b) { return now - newest[b] > STALE_HOURS * 36e5; })
+    .map(function (b) { return { bank: b, since: newest[b] }; })
+    .sort(function (x, y) { return x.since - y.since; });
+}
+function staleBanner() {
+  if (setting('bankConnected', '') !== 'yes') return '';
+  var msgs = [], last = parseLastSync(setting('lastSync', ''));
+  if (last && Date.now() - last > 26 * 36e5) msgs.push('The daily bank sync hasn’t run since ' + shortWhen(last) + '. Tap Sync now on Bank Sync.');
+  staleBanks().forEach(function (x) {
+    msgs.push('<b>' + esc(x.bank) + '</b> hasn’t sent anything new since ' + esc(shortWhen(x.since)) + '.');
+  });
+  if (!msgs.length) return '';
+  var banks = staleBanks().length;
+  return '<div class="notice nudge stale"><div>⚠️ ' + msgs.join(' ') +
+    (banks ? ' New charges and balances from ' + (banks > 1 ? 'these banks' : 'it') + ' are missing. Sign in at <b>beta-bridge.simplefin.org</b>, reconnect ' +
+      (banks > 1 ? 'them' : 'it') + ' (the bank wants you to log in again), then tap Sync now.' : '') + '</div>' +
+    (view !== 'bank' ? '<button class="btn" data-act="nav" data-v="bank">Bank Sync</button>' : '') + '</div>';
+}
+
 function render() {
   var m = calc();
   var views = { cards: viewCards, joint: viewJoint, bills: viewBills, money: viewMoney, savings: viewSavings, christmas: viewChristmas, bank: viewBank, search: viewSearch };
   if (SHOW_LONG_RANGE) views.long = viewLong;
   if (!views[view]) view = 'cards';
-  document.getElementById('app').innerHTML = views[view](m);
+  var banner = ''; try { banner = staleBanner(); } catch (e) { console.error(e); }
+  document.getElementById('app').innerHTML = banner + views[view](m);
   Array.prototype.forEach.call(document.querySelectorAll('nav button'), function (b) { b.classList.toggle('on', b.dataset.v === view); });
   if (focusAfter) { var el = document.querySelector(focusAfter); if (el) el.focus(); focusAfter = null; }
   updateUndo();
