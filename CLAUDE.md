@@ -29,7 +29,7 @@ Eric's family budget app. The page (index.html) is served by GitHub Pages from m
 - **Paycheck calendar** (Nov 1, 2026): paydays and extra-check picks live in the `paydays` and `extraPicked` settings (comma-separated dates), edited from My Money > Paycheck calendar. `PAYDAYS` / `EXTRA_PICKED` in index.html are only the defaults; `PAY_ANCHOR` (Oct 23 check pays the Nov 1 bills) is always the first check.
 - Remind Eric to tap **Back up** in the app before a change that touches the Sheet's structure.
 - Don't ship on a Friday payday or during the pay-period overlap without saying so.
-- Plans and history live in the claude.ai project "Comprehensive Budget and Family Planning App" (My Money - project context.md, My Money - roadmap.md).
+- Plans and history live in the claude.ai project "Comprehensive Budget and Family Planning App" (one doc: "My Money - notes.md").
 
 ## One-time setup (already done once connected)
 `setup/connect-google.sh`, run in a Codespace, signs in with Apps Script permissions only, downloads the live script into server/ with the passcode line replaced, and prints the two secrets to add.
