@@ -533,6 +533,8 @@ function syncBank_(how) {
     var order = charges.reduce(function (mx, r) { return Math.max(mx, +r.order || 0); }, 0);
 
     var newCharges = [], newImported = [], pending = [], newChecking = [], checkPending = [];
+    var cardPays = {};                                       // newest card payment seen on each card's own feed (page offers "mark paid")
+    var isCardPay = function (t) { return /payment|paymt|pymnt|pymt|\bpmt\b|autopay|auto pay|thank you|online transfer|ach credit/i.test((t.description || '') + ' ' + (t.payee || '')); };
     var oldPending = {};
     readTable_('Pending').forEach(function (r) { oldPending[r.bankId] = r; });
     (data.accounts || []).forEach(function (a) {
@@ -569,6 +571,7 @@ function syncBank_(how) {
         if (t.pending) {                                    // shown separately until it posts
           var pAmt = Math.round(-parseFloat(t.amount) * 100) / 100;
           if (!pAmt) return;
+          if (pAmt < 0 && isCardPay(t)) return;             // a payment still pending isn't a refund
           var pMs = ((t.transacted_at || t.posted) || 0) * 1000;
           var old = oldPending[tkey];
           if (old) old.stillPending = true;
@@ -587,7 +590,11 @@ function syncBank_(how) {
         newImported.push({ id: tkey, date: date, amount: amount, cardId: cardId });
         // paying the card off: look at both the description and the payee (Target's feed names the payee "Target"
         // and words the payment differently, so a $109.45 payment came in as a refund on Oct 26)
-        if (amount < 0 && /payment|paymt|pymnt|pymt|\bpmt\b|autopay|auto pay|thank you|online transfer|ach credit/i.test((t.description || '') + ' ' + (t.payee || ''))) return;
+        if (amount < 0 && isCardPay(t)) {
+          var cp = cardPays[cardId];
+          if (!cp || date > cp.date) cardPays[cardId] = { date: date, amount: -amount };
+          return;
+        }
         if (!amount) return;
         newCharges.push({ id: 'bk_' + Utilities.getUuid().slice(0, 12), cardId: cardId, item: tidyName_(desc),
                           amount: amount, who: '', order: ++order, date: date, bankId: tkey, addedAt: nowStamp, bankAsOf: asOf });
@@ -611,6 +618,7 @@ function syncBank_(how) {
     appendRows_('Imported', newImported);
     rewriteTable_('Pending', pending);
     rewriteTable_('CheckPending', checkPending);
+    try { saveCardPays_(cardPays); } catch (e) { console.error('Card payments failed: ' + (e.message || e)); }
     try { mirrorJoint_(data, tz, partners); } catch (e) { console.error('Joint checking copy failed: ' + (e.message || e)); }
     // yes/no only (never the passcode): lets Claude confirm Script Properties is set up before updating the web app
     try { setSetting_('passcodeReady', PASSCODE && PASSCODE !== 'change-me' ? 'yes' : 'no'); } catch (e) {}
@@ -620,6 +628,18 @@ function syncBank_(how) {
   } finally {
     lock.releaseLock();
   }
+}
+
+/*
+ * Card payments: the newest payment each card's own feed showed, kept in the cardPays setting as
+ * {cardId: {date, amount}}. The Cards page offers to mark that card paid (it never ticks it on its own).
+ */
+function saveCardPays_(found) {
+  if (!Object.keys(found).length) return;
+  var all = {};
+  try { all = JSON.parse(getSetting_('cardPays') || '{}') || {}; } catch (e) { all = {}; }
+  Object.keys(found).forEach(function (c) { if (!all[c] || found[c].date >= all[c].date) all[c] = found[c]; });
+  setSetting_('cardPays', JSON.stringify(all));
 }
 
 /*
