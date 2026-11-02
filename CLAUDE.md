@@ -10,7 +10,7 @@ Eric's family budget app. The page (index.html) is served by GitHub Pages from m
 - Commit straight to main with a plain-language message. Eric doesn't review PRs.
 
 ## No preview step (Eric, Oct 28, 2026)
-- **Build straight into index.html and ship.** Eric asked to skip the beta/ preview to save usage. `beta/index.html` is no longer kept up to date; don't edit it or test it.
+- **Build straight into index.html and ship.** Eric asked to skip the preview to save usage; the beta/ copy and its code were removed Nov 1, 2026.
 - Keep work lean: no screenshots or extra checks unless something is risky or Eric asks.
 - Script changes still go out before a page change that needs them (deploy, then push the page).
 
@@ -25,6 +25,8 @@ Eric's family budget app. The page (index.html) is served by GitHub Pages from m
 - **Setup runs only when it has to** (Oct 31, 2026): tab/header/trigger checks run when `TABLES` or `SYNC_SCHEDULE` change (a stamp in Script Properties, `SETUP_STAMP`) and once a day with the bank sync. If you change setup in any other way (a new trigger, new first-run data), bump `SETUP_REV` in Code.js.
 - **Saving reads each tab once per request** and then writes row by row (`tab_()`); anything that writes a tab another way (`appendRows_`, `rewriteTable_`, `deleteRows`) must `delete TAB_[name]`. Appends make room first (`room_()`): a tab starts with 1,000 rows and writing past the last row fails.
 - **Returns** (Oct 31, 2026): Charges `ret` = the date a charge was marked Returning (+ `|no=<refund ids>` Eric said aren't its refund). A returning charge stays on its card but counts nowhere (`counts()` in index.html; moneyMath skips it; clearing a card leaves it). `refundsFor()` / `settleReturn()` match the refund; both go to History. Tests: the Returns scenario in tests.html.
+- **Card payments** (Nov 1, 2026): a payment on a card's own bank feed is never a charge (pending ones too). The sync keeps the newest per card in the `cardPays` setting (`{cardId: {date, amount}}`); the Cards page asks "Mark it paid?" (`payWaiting()`). It never ticks Paid on its own (Eric's rule). `cardPaySeen` = the day Eric last marked/unmarked/cleared the card or said "Not this one"; payments on or before that day aren't asked about. Only cards linked in Bank Sync (not Apple).
+- **Paycheck calendar** (Nov 1, 2026): paydays and extra-check picks live in the `paydays` and `extraPicked` settings (comma-separated dates), edited from My Money > Paycheck calendar. `PAYDAYS` / `EXTRA_PICKED` in index.html are only the defaults; `PAY_ANCHOR` (Oct 23 check pays the Nov 1 bills) is always the first check.
 - Remind Eric to tap **Back up** in the app before a change that touches the Sheet's structure.
 - Don't ship on a Friday payday or during the pay-period overlap without saying so.
 - Plans and history live in the claude.ai project "Comprehensive Budget and Family Planning App" (My Money - project context.md, My Money - roadmap.md).

@@ -441,11 +441,6 @@
     .g-bill { grid-template-columns: 16px 26px 1fr 78px 26px 52px 20px; }
     .g-bill .c-total { display: none; }
   }
-  .preview-bar { position: sticky; top: 0; z-index: 30; background: #FFF3BF; color: #5C3D00; border-bottom: 2px solid #FAB005;
-    padding: 8px 16px; font-size: 13px; line-height: 1.4; }
-  .preview-bar a { margin-left: 10px; color: #5C3D00; font-weight: 700; }
-  .preview-bar .preview-new { font-size: 12px; opacity: .85; margin-top: 2px; }
-  .preview-bar ~ header.top { top: 0; position: relative; }
 </style>
 </head>
 <body>
@@ -502,24 +497,7 @@ var SHOW_LONG_RANGE = false;       // Long range page hidden for now (Eric, Oct 
 forget('key');                     // clears a passcode saved by older versions of the page
 var CONN = { url: remember('url'), key: null };
 
-/* ---- Preview: the copy of this page in beta/ reads your real data but never saves or changes anything.
-   New features are built there first; they move to the real page only once Eric has tried them. */
-var PREVIEW = /\/beta\/(index\.html)?$/.test(location.pathname);
-var PREVIEW_READS = { getData: 1, getHistory: 1, ping: 1 };
-var PREVIEW_NEW = [];      // what's being tried in the preview right now, one short line each
-function previewBanner() {
-  if (!PREVIEW) return;
-  document.title = 'Bills · Preview';
-  var b = document.createElement('div');
-  b.className = 'preview-bar';
-  b.innerHTML = '<b>Preview.</b> Your real numbers, but nothing here saves. Reload to start over.' +
-    '<a href="../">Open the real app</a>' +
-    '<div class="preview-new">' + (PREVIEW_NEW.length ? 'Trying out: ' + PREVIEW_NEW.map(esc).join(' · ') : 'Nothing new yet: same as the real app.') + '</div>';
-  document.body.insertBefore(b, document.body.firstChild);
-}
-
 function api(fn, extra) {
-  if (PREVIEW && !PREVIEW_READS[fn]) return Promise.reject(new Error('This is the preview, so nothing is saved or changed. Use the real app for that.'));
   var req = { key: CONN.key, fn: fn };
   if (extra) Object.keys(extra).forEach(function (k) { req[k] = extra[k]; });
   return fetch(CONN.url, {
@@ -565,7 +543,6 @@ function setting(id, dflt) { var s = S.Settings.filter(function (x) { return x.i
 var queue = [], busy = false, fails = 0;
 function status(text, err) { var el = document.getElementById('status'); el.textContent = text; el.className = err ? 'err' : ''; }
 function send(ops) {
-  if (PREVIEW) { status('Preview: not saved'); return; }
   queue = queue.concat(ops); flush();
 }
 function flush() {
@@ -794,6 +771,7 @@ function viewCards(m) {
       (m.pend.n ? '+ ' + money(m.pend.all) + ' pending' : 'Every charge has a person')), warn: !!m.needN }) +
     '</div>';
 
+  h += payNudge(cards);
   h += sinceNudge(m);
   h += '<div class="pills">';
   cards.forEach(function (c) {
@@ -912,6 +890,29 @@ function viewCards(m) {
   return h;
 }
 
+/* A payment that showed up on a card's own bank feed (the script keeps the newest per card in the cardPays
+   setting). Until Eric marks the card paid, the Cards page asks once. It never ticks Paid on its own (Eric, Oct 27).
+   cardPaySeen = the day Eric last marked that card paid or unpaid, cleared it, or said "not this one";
+   payments on or before that day aren't asked about again. */
+function jsonSetting(id) { try { return JSON.parse(setting(id, '') || '{}') || {}; } catch (e) { return {}; } }
+function payWaiting(card) {
+  var p = jsonSetting('cardPays')[card.id];
+  if (!p || !p.date || card.paid) return null;
+  if (p.date <= (jsonSetting('cardPaySeen')[card.id] || '')) return null;
+  if (dayGap(p.date, today()) > 21) return null;                 // old news
+  return p;
+}
+function markPaySeen(cardId) { var s = jsonSetting('cardPaySeen'); s[cardId] = today(); setSetting('cardPaySeen', JSON.stringify(s)); }
+function payNudge(cards) {
+  return cards.map(function (c) {
+    var p = payWaiting(c);
+    if (!p) return '';
+    return '<div class="notice nudge"><span><b>' + esc(c.name) + ':</b> a ' + money(p.amount) + ' payment went through ' + shortDate(p.date) + '. Mark it paid?</span>' +
+      '<span><button class="btn small primary" data-act="paynudge" data-id="' + esc(c.id) + '">Mark paid</button> ' +
+      '<button class="btn small" data-act="paynope" data-id="' + esc(c.id) + '">Not this one</button></span></div>';
+  }).join('');
+}
+
 /* after payday and before the card money is sent: offer to hold the new charges for next time */
 function sinceNudge(m) {
   if (!checkingAccounts().length) return '';
@@ -975,7 +976,7 @@ function viewJoint(m) {
   return h;
 }
 
-/* ---- joint checking straight from the bank (preview). The script keeps a copy of the joint account's recent lines in
+/* ---- joint checking straight from the bank. The script keeps a copy of the joint account's recent lines in
    JointBank (rewritten on every sync); your answers live in JointKinds, keyed by the same id, so they survive the rewrite.
    Debit spending out of the joint counts against the joint's Left just like out-of-pocket entries, from the date the joint
    last started over (jointSince, set when you clear out-of-pocket). */
@@ -1430,15 +1431,27 @@ var PAY_ANCHOR = { pay: '2026-10-23', bill: '2026-11-01' };      // the Oct 23 c
 var EXTRA_PICKED = ['2026-12-18'];                             // checks Eric chose as the extra one (Dec 18 so both Christmas $700s land before Christmas)
 var EXTRA_CHRISTMAS = 700;                                     // set aside for the kids' Christmas on the extra check
 function dayGap(a, b) { return Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 864e5); }
+/* Paydays and extra-check picks can be changed in the app (Paycheck calendar on My Money); they're kept in the
+   paydays / extraPicked settings. PAYDAYS and EXTRA_PICKED are only the starting values. */
+function listSetting(id, dflt) {
+  var v = setting(id, null);
+  if (v === null || v === undefined) return dflt.slice();
+  return String(v).split(',').map(function (x) { return x.trim(); }).filter(function (x) { return /^\d{4}-\d{2}-\d{2}$/.test(x); });
+}
+function payDays() {
+  var days = listSetting('paydays', PAYDAYS).filter(function (d) { return d > PAY_ANCHOR.pay; }).sort();
+  return [PAY_ANCHOR.pay].concat(days.filter(function (d, i) { return d !== days[i - 1]; }));
+}
+function extraPicked() { return listSetting('extraPicked', EXTRA_PICKED); }
 function payPlan() {
-  var days = PAYDAYS.slice();
+  var days = payDays(), picked = extraPicked();
   while (days.length < 60) days.push(addDays(days[days.length - 1], 14));
   var plan = [], bill = PAY_ANCHOR.bill;
   var nextBill = function (b) { var d = new Date(b + 'T12:00:00'); if (d.getDate() === 1) { d.setDate(15); } else { d.setMonth(d.getMonth() + 1); d.setDate(1); } return d.toISOString().slice(0, 10); };
   days.forEach(function (d, i) {
     if (i === 0) { plan.push({ date: d, bill: bill }); return; }
     var b = nextBill(bill);
-    if (EXTRA_PICKED.indexOf(d) >= 0 || dayGap(d, b) >= 15) plan.push({ date: d, extra: true });
+    if (picked.indexOf(d) >= 0 || dayGap(d, b) >= 15) plan.push({ date: d, extra: true, picked: picked.indexOf(d) >= 0 });
     else { plan.push({ date: d, bill: b }); bill = b; }
   });
   return plan;
@@ -1893,6 +1906,8 @@ function viewMoney(m) {
     return moneyLine({ name: xferName(r) || r.name, date: r.date, amount: r.amount, sub: (xferName(r) ? esc(r.name) + ' · ' : '') + (r.manual ? 'Typed in · matched, waiting for your answer' : 'M&amp;T checking') + (r.pairId ? ' · matched pair' : ''), ck: r, mm: mm, del: r.manual ? r.id : '' });
   }).join('') : '<div class="empty">Nothing here.</div>') + '</div></section>';
 
+  h += '<div class="pfoot" style="padding:8px 0 0"><button class="link" data-act="paycal">Paycheck calendar</button></div>';
+
   var P = (S.Periods || []).slice().sort(function (a, b) { return String(b.endDate).localeCompare(String(a.endDate)); });
   if (P.length) {
     h += '<section class="panel" style="--c:#868E96;margin-top:16px"><div class="phead"><div class="grow"><div class="eyebrow">History</div>' +
@@ -2039,6 +2054,49 @@ function addEntryBox() {
     if (k === 'cards') coverFor(id);
     render();
     toast('Added. It counts now and links up when the bank shows it. <button class="toast-btn" data-act="undo">Undo</button>', 6000);
+  };
+}
+/* Paycheck calendar: which bills each upcoming check pays, picking the extra check, and editing the paydays */
+function parseDay(t) {
+  t = String(t || '').trim(); var m;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+  if ((m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/))) return (m[3].length === 2 ? '20' + m[3] : m[3]) + '-' + ('0' + m[1]).slice(-2) + '-' + ('0' + m[2]).slice(-2);
+  return null;
+}
+function payCalBox() {
+  var from = addDays(today(), -3);
+  var plan = payPlan().filter(function (p) { return p.date >= from; }).slice(0, 14);
+  var rows = plan.map(function (p) {
+    var what = p.extra ? '<b>Extra check</b>' + (p.picked ? ' (you picked it)' : '') : 'Pays the ' + shortDate(p.bill) + ' bills';
+    var btn = p.extra && !p.picked ? '' : (p.picked ? '<button class="btn small primary" data-pick="' + p.date + '">✓ Extra</button>' : '<button class="link" data-pick="' + p.date + '">Make extra</button>');
+    return '<div class="fline" style="grid-template-columns:1fr auto;padding-left:0;padding-right:0"><div><b>' + shortDate(p.date) + (p.date.slice(0, 4) !== today().slice(0, 4) ? ', ' + p.date.slice(0, 4) : '') + '</b><div class="sub2">' + what + '</div></div><div>' + btn + '</div></div>';
+  }).join('');
+  var el = modal('<h3>Paycheck calendar</h3><p style="margin-top:0">Each check pays the next bill date (the 1st or 15th). When the next bill date is 15 or more days away, that check is the extra one: no bills, ' +
+    money(extraCheck().mine) + ' to the joint. You can also pick a check to be the extra.</p><div class="rows">' + rows + '</div>' +
+    '<details style="margin-top:12px"><summary>Edit paydays</summary><p class="sub2">One date per line (like 11/6/2026). After the last one, every 14 days is assumed. Use this when the new KTA payroll calendar comes out.</p>' +
+    '<form id="mform"><textarea name="days" rows="8" style="width:100%;font:inherit">' + payDays().slice(1).map(function (d) { return +d.slice(5, 7) + '/' + +d.slice(8) + '/' + d.slice(0, 4); }).join('\n') + '</textarea>' +
+    '<div class="mact"><button type="button" class="btn" data-m="no">Close</button><button class="btn primary">Save paydays</button></div></form></details>' +
+    '<div class="mact"><button type="button" class="btn" data-m="no">Done</button></div>');
+  el.onclick = function (e) {
+    var pk = e.target.closest('[data-pick]');
+    if (pk) {
+      var list = extraPicked(), d = pk.dataset.pick, i = list.indexOf(d);
+      if (i >= 0) list.splice(i, 1); else list.push(d);
+      undoLabel = 'changing the extra paycheck';
+      setSetting('extraPicked', list.sort().join(','));
+      closeModal(); render(); payCalBox(); return;
+    }
+    if (e.target.closest('[data-m="no"]') || e.target === el) closeModal();
+  };
+  el.querySelector('#mform').onsubmit = function (e) {
+    e.preventDefault();
+    var bad = [], days = [];
+    e.target.days.value.split(/[\n,]+/).forEach(function (t) { if (!t.trim()) return; var d = parseDay(t); if (d) days.push(d); else bad.push(t.trim()); });
+    if (bad.length || !days.length) { toast(bad.length ? 'I can’t read: ' + esc(bad.slice(0, 3).join(', ')) : 'Add at least one date'); return; }
+    days.sort();
+    undoLabel = 'changing the paydays';
+    setSetting('paydays', days.join(','));
+    closeModal(); render(); toast('Paydays saved <button class="toast-btn" data-act="undo">Undo</button>', 6000);
   };
 }
 function linkBox(bankId) {
@@ -2527,7 +2585,11 @@ document.addEventListener('click', function (e) {
     removeRow(b.dataset.t, id); render();
     toast('Deleted “' + esc(dr.item || dr.name || dr.note || 'item') + '” <button class="toast-btn" data-act="undo">Undo</button>', 6000);
   }
-  else if (a === 'paid') { var c = find('Cards', id); undoLabel = 'marking ' + c.name + (c.paid ? ' unpaid' : ' paid'); upsert('Cards', { id: id, paid: !c.paid }); render(); }
+  else if (a === 'paid') { var c = find('Cards', id); undoLabel = 'marking ' + c.name + (c.paid ? ' unpaid' : ' paid'); upsert('Cards', { id: id, paid: !c.paid }); markPaySeen(id); render(); }
+  else if (a === 'paynudge') { var pc = find('Cards', id); undoLabel = 'marking ' + pc.name + ' paid'; upsert('Cards', { id: id, paid: true }); markPaySeen(id); render();
+    toast(esc(pc.name) + ' marked paid <button class="toast-btn" data-act="undo">Undo</button>', 6000); }
+  else if (a === 'paycal') { payCalBox(); }
+  else if (a === 'paynope') { undoLabel = 'skipping that payment'; markPaySeen(id); render(); }
   else if (a === 'clearcard') {
     var cc = find('Cards', id), n = S.Charges.filter(function (x) { return x.cardId === id && counts(x); }).length;
     var nh = S.Charges.filter(function (x) { return x.cardId === id && !counts(x); }).length;
@@ -2551,7 +2613,7 @@ document.addEventListener('click', function (e) {
       });
       // save a copy of each charge to History first, so search can still find it after the card is cleared
       keepRows.forEach(function (r) { upsert('History', r); });
-      removeIds('Charges', toClear.map(function (x) { return x.id; })); upsert('Cards', { id: id, paid: false }); render();
+      removeIds('Charges', toClear.map(function (x) { return x.id; })); upsert('Cards', { id: id, paid: false }); markPaySeen(id); render();
       toast(esc(cc.name) + ' cleared <button class="toast-btn" data-act="undo">Undo</button>', 8000);
     });
   }
@@ -2620,7 +2682,6 @@ document.addEventListener('click', function (e) {
     });
   }
   else if (a === 'logout') {
-    if (PREVIEW) { toast('The preview shares your sign-in with the real app. Log out from the real app.'); return; }
     confirmBox('Log out on this device?', 'This forgets the app link on this device only. Your bills stay safe in your Google Sheet.', 'Log out', function () {
       forget('url'); forget('key'); CONN = { url: null, key: null }; S = null; showConnect();
     });
@@ -2830,7 +2891,7 @@ function load() {
     return api('getData');
   }).then(function (data) {
     store('url', CONN.url);   // remember the link once it works (the passcode is never saved)
-    S = data; prep(); lrImportHash(); status(PREVIEW ? 'Preview: nothing saves' : 'All changes saved'); render();
+    S = data; prep(); lrImportHash(); status('All changes saved'); render();
   }, function (err) {
     queue = pending.concat(queue);
     if (authProblem(err)) { showConnect(cleanMsg(err.message)); return; }
@@ -2839,7 +2900,6 @@ function load() {
   });
 }
 
-previewBanner();
 if (CONN.url && CONN.key) load(); else showConnect();
 </script>
 </body>

@@ -58,9 +58,8 @@
 /* ---------------------------------------------------------------- loading the app with saving switched off */
 var START_LINE = 'if (CONN.url && CONN.key) load(); else showConnect();';
 
-// tests.html checks the real app; tests.html?app=beta checks the preview copy in beta/
-var WHICH = /[?&]app=beta\b/.test(location.search) ? 'beta' : 'live';
-var APP_FILE = WHICH === 'beta' ? 'beta/index.html' : 'index.html';
+var WHICH = 'live';
+var APP_FILE = 'index.html';
 var ORIG = {}, fetchCalls = [];
 
 function loadApp() {
@@ -399,25 +398,69 @@ SCENARIOS.push({
   ]
 });
 
+function press(act, id) {
+  var b = A.document.createElement('button'); b.dataset.act = act; if (id) b.dataset.id = id;
+  A.document.body.appendChild(b); b.click(); b.remove();
+}
+function setS(id, v) { var r = A.S.Settings.filter(function (x) { return x.id === id; })[0]; if (r) r.value = v; else A.S.Settings.push({ id: id, value: v }); }
+
 SCENARIOS.push({
-  title: 'The preview can\'t save',
-  about: 'Pretends to be the preview copy and tries to save, back up and sync. None of it may reach Google.',
+  title: 'A card payment from the bank asks to mark the card paid',
+  about: 'When a payment shows up on a card\'s own bank feed, the Cards page asks once. It never ticks Paid by itself.',
   data: startingData(),
   steps: [
-    { t: 'Preview mode on: try to save a change, a backup and a bank sync', run: function () {
-        fetchCalls.length = 0; A.PREVIEW = true; A.queue = [];
-        ORIG.send([{ op: 'upsert', table: 'Charges', row: { id: 'x', amount: 1 } }]);
-        var res = SCENARIOS[SCENARIOS.length - 1].res = {};
-        ['apply', 'backup', 'bankSync', 'bankDisconnect', 'bankConnect'].forEach(function (fn) {
-          ORIG.api(fn).then(function () { res[fn] = 'went through'; }, function (e) { res[fn] = /preview/i.test(e.message) ? 'blocked' : 'tried the network'; });
-        });
-        ORIG.api('getData').then(null, function () {});      // reading is allowed (cut off here by the test page)
+    { t: 'No payment seen yet', run: function () {}, check: function () { return [
+        yes('Nothing asked', !A.payWaiting(A.find('Cards', 'c_amex'))), pagesDraw()]; } },
+    { t: 'The bank shows a $520.00 Amex payment two days ago', run: function () {
+        setS('cardPays', JSON.stringify({ c_amex: { date: A.addDays(A.today(), -2), amount: 520 } }));
       }, check: function () { return [
-        yes('Nothing queued to save', A.queue.length === 0, A.queue.length + ' waiting to save'),
-        yes('Only the read (getData) tried to reach Google', fetchCalls.length === 1, fetchCalls.length + ' calls')]; } },
-    { t: 'Every write was refused by the preview itself', run: function () { A.PREVIEW = false; }, check: function () {
-        var res = SCENARIOS[SCENARIOS.length - 1].res;
-        return ['apply', 'backup', 'bankSync', 'bankDisconnect', 'bankConnect'].map(function (fn) { return yes(fn + ' blocked', res[fn] === 'blocked', res[fn] || 'no answer'); }); } }
+        yes('Amex asks', !!A.payWaiting(A.find('Cards', 'c_amex'))),
+        yes('Chase doesn\'t', !A.payWaiting(A.find('Cards', 'c_chase'))),
+        yes('Amex still not paid on its own', !A.find('Cards', 'c_amex').paid),
+        says('Cards page asks', 'Amex: a $520.00 payment went through', pageText('Cards'))]; } },
+    { t: 'Tap Mark paid', run: function () { press('paynudge', 'c_amex'); }, check: function () { return [
+        yes('Amex is paid', A.find('Cards', 'c_amex').paid),
+        yes('Not asked again', !A.payWaiting(A.find('Cards', 'c_amex')))]; } },
+    { t: 'Clear the card: the same payment isn\'t asked about again', run: function () {
+        A.upsert('Cards', { id: 'c_amex', paid: false }); A.markPaySeen('c_amex');
+      }, check: function () { return [yes('Not asked', !A.payWaiting(A.find('Cards', 'c_amex')))]; } },
+    { t: '"Not this one" on a new Chase payment', run: function () {
+        setS('cardPays', JSON.stringify({ c_chase: { date: A.today(), amount: 120.80 } }));
+        var asked = !!A.payWaiting(A.find('Cards', 'c_chase'));
+        press('paynope', 'c_chase');
+        SCENARIOS[SCENARIOS.length - 1].asked = asked;
+      }, check: function () { return [
+        yes('It had asked', SCENARIOS[SCENARIOS.length - 1].asked),
+        yes('Stops asking', !A.payWaiting(A.find('Cards', 'c_chase'))),
+        yes('Chase not marked paid', !A.find('Cards', 'c_chase').paid)]; } },
+    { t: 'A payment over 3 weeks old', run: function () {
+        setS('cardPays', JSON.stringify({ c_amex: { date: A.addDays(A.today(), -30), amount: 50 } }));
+        setS('cardPaySeen', '{}');
+      }, check: function () { return [yes('Not asked', !A.payWaiting(A.find('Cards', 'c_amex')))]; } }
+  ]
+});
+
+SCENARIOS.push({
+  title: 'Paycheck calendar can be changed in the app',
+  about: 'Paydays and the extra-check pick live in Settings now. Without them, the built-in KTA calendar and the Dec 18 pick are used.',
+  data: startingData(),
+  steps: [
+    { t: 'Built-in calendar', run: function () {}, check: function () { var p = function (d) { return A.planFor(d) || {}; }; return [
+        yes('Dec 18 is the extra check', p('2026-12-18').extra),
+        yes('Dec 31 pays the Jan 1 bills', p('2026-12-31').bill === '2027-01-01'),
+        yes('Nov 6 pays the Nov 15 bills', p('2026-11-06').bill === '2026-11-15')]; } },
+    { t: 'Un-pick Dec 18', run: function () { setS('extraPicked', ''); }, check: function () { var p = function (d) { return A.planFor(d) || {}; }; return [
+        yes('Dec 18 pays the Jan 1 bills', p('2026-12-18').bill === '2027-01-01'),
+        yes('Dec 31 becomes the extra (15 days before Jan 15)', p('2026-12-31').extra)]; } },
+    { t: 'Typed-in paydays (M/D/YYYY works)', run: function () {
+        setS('extraPicked', '2026-12-18');
+        var ds = ['11/6/2026', '11/20/2026', '12/4/2026', '12/18/2026', '1/1/2027'].map(A.parseDay);
+        setS('paydays', ds.join(','));
+      }, check: function () { var p = function (d) { return A.planFor(d) || {}; }; return [
+        yes('Dates read right', A.parseDay('1/1/2027') === '2027-01-01' && A.parseDay('nonsense') === null),
+        yes('Jan 1 check pays the Jan 1 bills', p('2027-01-01').bill === '2027-01-01'),
+        yes('Every 14 days after the last one', !!A.payPlan().filter(function (x) { return x.date === '2027-01-15'; })[0]),
+        pagesDraw()]; } }
   ]
 });
 
@@ -499,10 +542,9 @@ async function runAll() {
   document.getElementById('out').innerHTML = html;
   var b = document.getElementById('banner');
   b.className = 'banner ' + (failed ? 'bad' : 'ok');
-  var which = WHICH === 'beta' ? 'Preview copy (beta/)' : 'Real app';
+  var which = 'Real app';
   b.innerHTML = (failed ? failed + ' of ' + total + ' checks failed' : 'All ' + total + ' checks passed') + ' · ' + which +
-    '<small>' + (failed ? 'Don\'t ship until these pass.' : 'The money math matches the plan.') + ' ' +
-    (WHICH === 'beta' ? '<a href="tests.html">Test the real app</a>' : '<a href="tests.html?app=beta">Test the preview</a>') + '</small>';
+    '<small>' + (failed ? 'Don\'t ship until these pass.' : 'The money math matches the plan.') + '</small>';
   document.title = (failed ? '✗ ' : '✓ ') + 'Money-math tests · ' + which;
   window.__result = { total: total, failed: failed, app: WHICH };
 }
