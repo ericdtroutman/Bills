@@ -420,14 +420,20 @@ function bankDisconnect_() {
   return { ok: true };
 }
 
-/* The daily sync runs at about 8:30 AM (Eric, Oct 29, 2026; Google fires it within about 15 minutes of that; SimpleFIN asks apps to avoid the top of the hour). SYNC_AT records which schedule the
-   current trigger was made with, so changing SYNC_SCHEDULE replaces the old trigger the next time the app is opened. */
-var SYNC_SCHEDULE = '08:30';
+/* The automatic sync runs twice a day: about 8:30 AM (Eric, Oct 29, 2026) and about 11 PM (Eric, Nov 2, 2026, so the
+   banks SimpleFIN refreshed during the day show up that night). Google fires each within about 15 minutes of the time.
+   SYNC_AT records which schedule the current triggers were made with, so changing SYNC_SCHEDULE replaces the old
+   triggers the next time the app is opened (or the next automatic sync runs). */
+var SYNC_SCHEDULE = '08:30,23:00';
 function ensureSyncTrigger_() {
   var mine = ScriptApp.getProjectTriggers().filter(function (t) { return t.getHandlerFunction() === 'dailyBankSync'; });
-  if (mine.length && props_().getProperty('SYNC_AT') === SYNC_SCHEDULE) return;
+  var want = SYNC_SCHEDULE.split(',');
+  if (mine.length === want.length && props_().getProperty('SYNC_AT') === SYNC_SCHEDULE) return;
   mine.forEach(function (t) { ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger('dailyBankSync').timeBased().everyDays(1).atHour(8).nearMinute(30).create();
+  want.forEach(function (hm) {
+    var p = hm.split(':');
+    ScriptApp.newTrigger('dailyBankSync').timeBased().everyDays(1).atHour(Number(p[0])).nearMinute(Number(p[1])).create();
+  });
   props_().setProperty('SYNC_AT', SYNC_SCHEDULE);
 }
 
