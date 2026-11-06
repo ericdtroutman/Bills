@@ -633,7 +633,7 @@ function removeWhere(table, field, value) {
 
 /* ======================================================================= math */
 function pendingMath() {
-  var P = S.Pending || [], by = {};
+  var P = (S.Pending || []).filter(function (p) { return !p.hold; }), by = {};   // pending charges on hold belong to the next check (Nov 6, 2026)
   WHO.forEach(function (w) { by[w] = sum(P.filter(function (p) { return p.who === w; }), function (p) { return p.amount; }); });
   return { all: sum(P, function (p) { return p.amount; }), n: P.length,
            eric: by.Eric + by.Split / 2 + by[EJ] / 2, arianna: by.Arianna + by.Split / 2, joint: by.Joint + by[EJ] / 2,
@@ -782,7 +782,7 @@ function viewCards(m) {
       (function () { var n = S.Charges.filter(function (x) { return x.cardId === c.id && !x.who && counts(x); }).length; return n ? ' <span class="badge warn">' + n + ' new</span>' : ''; })() +
       (nRet ? ' <span class="rchip" title="Being returned">↩ ' + nRet + '</span>' : '') + '</span>' +
       '<span class="ptot num">' + money(t) + '</span>' +
-      (function () { var pp = (S.Pending || []).filter(function (x) { return x.cardId === c.id; }); return pp.length ? '<span class="ppend">+ ' + money(sum(pp, function (x) { return x.amount; })) + ' pending</span>' : ''; })() +
+      (function () { var pp = (S.Pending || []).filter(function (x) { return x.cardId === c.id && !x.hold; }); return pp.length ? '<span class="ppend">+ ' + money(sum(pp, function (x) { return x.amount; })) + ' pending</span>' : ''; })() +
       '</button>';
   });
   h += '<button class="pill add" data-act="addcard">+ Add card</button></div>';
@@ -825,7 +825,9 @@ function viewCards(m) {
   var pend = (S.Pending || []).filter(function (x) { return x.cardId === card.id; })
     .sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
   if (pend.length) {
-    h += '<div class="pend-head"><b>Pending at the bank · ' + money(sum(pend, function (x) { return x.amount; })) + '</b>' +
+    var pendHeld = pend.filter(function (x) { return x.hold; });
+    h += '<div class="pend-head"><b>Pending at the bank · ' + money(sum(pend, function (x) { return x.hold ? 0 : x.amount; })) +
+      (pendHeld.length ? ' · ' + money(sum(pendHeld, function (x) { return x.amount; })) + ' on hold' : '') + '</b>' +
       '<span>Not in the totals yet. Label them to see what’s coming. When one posts it moves up into the charges.</span></div><div class="rows pend">';
     pend.forEach(function (x) {
       h += '<div class="row g-charge' + (x.hold ? ' held' : '') + '" data-charge="' + esc(x.id) + '"><button class="holdbox' + (x.hold ? ' on' : '') + '" data-act="hold" data-t="Pending" data-id="' + esc(x.id) + '" title="' +

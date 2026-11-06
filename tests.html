@@ -188,7 +188,8 @@ var SCENARIOS = [
           A.S.Pending.push({ id: 'p_weg', cardId: 'c_amex', item: 'WEGMANS', amount: 25, who: 'Eric', date: '2026-10-25', bankId: 'b_weg', hold: true });
         }, check: function () { var m = mm(); return [
           money('This pay period', 401.12, m.newPot), money('Left from last pay period', 379.20, m.oldPot), money('Really yours', 780.32, m.really),
-          says('Checklist still says send $675.00', 'Send $675.00 to the joint', wrapText())]; } },
+          says('Checklist still says send $675.00', 'Send $675.00 to the joint', wrapText()),
+          money('Held pending not in Eric\'s pending', 0, A.calc().pend.eric)]; } },
       { t: 'You send $1,406 for bills (+ Add, Bills transfer)', run: function () {
           SCENARIOS[0].ids.bills = typeIn('out', 1406, 'bills', '2026-10-26', 'Bills');
         }, check: function () { var m = mm(); return [
