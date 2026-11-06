@@ -765,24 +765,26 @@ function viewCards(m) {
     tile('Arianna owes', m.arianna, { hint: m.pend.arianna ? 'With pending: ' + money(m.arianna + m.pend.arianna) : 'Her charges + half of Split' }) +
     tile('Joint money left', m.jointLeft, { sign: true, act: 'joint', hint: m.pend.joint ? 'After pending: ' + money(m.jointLeft - m.pend.joint) : 'Tap to change what’s in the joint' }) +
     tile('Bills on cards', m.tag.Bills, { hint: 'Already in the monthly budget' }) +
-    tile('Total on all cards', m.onCards, { hint: m.needN ? m.needN + (m.needN === 1 ? ' charge needs' : ' charges need') + ' a person' :
+    // the total includes pending charges that aren't on hold (Eric, Nov 6, 2026)
+    tile('Total on all cards', r2(m.onCards + m.pend.all), { hint: m.needN ? m.needN + (m.needN === 1 ? ' charge needs' : ' charges need') + ' a person' :
       (m.held.length ? money(sum(m.held, function (x) { return x.amount; })) + ' on hold, not counted' :
       m.returning.length ? money(sum(m.returning, function (x) { return x.amount; })) + ' being returned, not counted' :
-      (m.pend.n ? '+ ' + money(m.pend.all) + ' pending' : 'Every charge has a person')), warn: !!m.needN }) +
+      (m.pend.n ? 'Includes ' + money(m.pend.all) + ' pending' : 'Every charge has a person')), warn: !!m.needN }) +
     '</div>';
 
   h += payNudge(cards);
   h += sinceNudge(m);
   h += '<div class="pills">';
   cards.forEach(function (c) {
-    var t = sum(S.Charges.filter(function (x) { return x.cardId === c.id && counts(x); }), function (x) { return x.amount; });
+    var pp = (S.Pending || []).filter(function (x) { return x.cardId === c.id && !x.hold; }), ppT = sum(pp, function (x) { return x.amount; });
+    var t = sum(S.Charges.filter(function (x) { return x.cardId === c.id && counts(x); }), function (x) { return x.amount; }) + ppT;
     var nRet = S.Charges.filter(function (x) { return x.cardId === c.id && x.ret; }).length;
     h += '<button class="pill' + (c.id === selCard ? ' on' : '') + '" style="--c:' + col(c.color) + '" data-act="card" data-id="' + c.id + '">' +
       '<span class="pname">' + esc(c.name) + (c.paid ? ' <span class="badge">Paid</span>' : '') +
       (function () { var n = S.Charges.filter(function (x) { return x.cardId === c.id && !x.who && counts(x); }).length; return n ? ' <span class="badge warn">' + n + ' new</span>' : ''; })() +
       (nRet ? ' <span class="rchip" title="Being returned">↩ ' + nRet + '</span>' : '') + '</span>' +
       '<span class="ptot num">' + money(t) + '</span>' +
-      (function () { var pp = (S.Pending || []).filter(function (x) { return x.cardId === c.id && !x.hold; }); return pp.length ? '<span class="ppend">+ ' + money(sum(pp, function (x) { return x.amount; })) + ' pending</span>' : ''; })() +
+      (pp.length ? '<span class="ppend">incl. ' + money(ppT) + ' pending</span>' : '') +
       '</button>';
   });
   h += '<button class="pill add" data-act="addcard">+ Add card</button></div>';
@@ -793,7 +795,9 @@ function viewCards(m) {
   var retItems = items.filter(function (x) { return x.ret; });
   items = items.filter(function (x) { return !x.ret; });
   var liveItems = items.filter(function (x) { return !x.hold; }), heldItems = items.filter(function (x) { return x.hold; });
-  var total = sum(liveItems, function (x) { return x.amount; });
+  var pendLive = (S.Pending || []).filter(function (x) { return x.cardId === card.id && !x.hold; });
+  var pendLiveT = sum(pendLive, function (x) { return x.amount; });
+  var total = sum(liveItems, function (x) { return x.amount; }) + pendLiveT;
   var heldTotal = sum(heldItems, function (x) { return x.amount; });
   var retTotal = sum(retItems, function (x) { return x.amount; });
 
@@ -801,6 +805,7 @@ function viewCards(m) {
     '<div class="grow"><div class="eyebrow">Card</div>' + textCell('Cards', card.id, 'name', card.name, '', 'title-in') +
     '<button class="btn small" style="margin-top:6px" data-act="login" data-t="Cards" data-id="' + card.id + '">' + KEY_SVG.replace('<svg', '<svg style="width:13px;height:13px;vertical-align:-2px;margin-right:5px"') + (openLogin[card.id] ? 'Hide login' : 'Login info' + (hasLogin(card) ? ' ✓' : '')) + '</button></div>' +
     '<div class="big num">' + money(total) + '<small>' + liveItems.length + ' charge' + (liveItems.length === 1 ? '' : 's') +
+      (pendLive.length ? ' + ' + pendLive.length + ' pending (' + money(pendLiveT) + ')' : '') +
       (heldItems.length ? ' · ' + money(heldTotal) + ' on hold' : '') + (retItems.length ? ' · ' + money(retTotal) + ' being returned' : '') + '</small></div>' +
     '</div>';
   if (openLogin[card.id]) h += loginBox('Cards', card);
@@ -828,7 +833,7 @@ function viewCards(m) {
     var pendHeld = pend.filter(function (x) { return x.hold; });
     h += '<div class="pend-head"><b>Pending at the bank · ' + money(sum(pend, function (x) { return x.hold ? 0 : x.amount; })) +
       (pendHeld.length ? ' · ' + money(sum(pendHeld, function (x) { return x.amount; })) + ' on hold' : '') + '</b>' +
-      '<span>Not in the totals yet. Label them to see what’s coming. When one posts it moves up into the charges.</span></div><div class="rows pend">';
+      '<span>Counted in the card total unless on hold. Label them to see who owes what. When one posts it moves up into the charges.</span></div><div class="rows pend">';
     pend.forEach(function (x) {
       h += '<div class="row g-charge' + (x.hold ? ' held' : '') + '" data-charge="' + esc(x.id) + '"><button class="holdbox' + (x.hold ? ' on' : '') + '" data-act="hold" data-t="Pending" data-id="' + esc(x.id) + '" title="' +
         (x.hold ? 'On hold. Click to count it again' : 'Put on hold (counts toward the next pay period)') + '"></button><div><div class="item" style="padding:7px 0">' + esc(x.item) + '<span class="pchip">pending</span>' + (x.hold ? ' <span class="hchip">on hold</span>' : '') + '</div>' +
