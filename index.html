@@ -590,6 +590,7 @@ function undo() {
     if (o.op === 'upsert') upsert(o.table, clone(o.row)); else removeRow(o.table, o.id);
   });
   replaying = false;
+  try { settlePaidPending(); } catch (e) { console.error(e); }
   updateUndo(); render();
   toast('Undid ' + esc(g.label) + (undoStack.length ? ' <button class="toast-btn" data-act="undo">Undo more</button>' : ''), 4000);
 }
@@ -991,7 +992,9 @@ function viewCards(m) {
     var pendHeld = pend.filter(function (x) { return x.hold; });
     h += '<div class="pend-head"><b>Pending at the bank · ' + money(sum(pend, function (x) { return x.hold ? 0 : x.amount; })) +
       (pendHeld.length ? ' · ' + money(sum(pendHeld, function (x) { return x.amount; })) + ' on hold' : '') + '</b>' +
-      '<span>Counted in the card total unless on hold. Label them to see who owes what. When one posts it moves up into the charges.</span></div><div class="rows pend">';
+      '<span>Counted in the card total unless on hold. Label them to see who owes what. When one posts it moves up into the charges.</span>' +
+      (pend.some(function (x) { return !x.hold; }) ? '<button class="btn small" style="margin-top:6px" data-act="pendpaid" data-id="' + esc(card.id) + '">Already paid these (not on hold)</button>' : '') +
+      '</div><div class="rows pend">';
     pend.forEach(function (x) {
       h += '<div class="row g-charge' + (x.hold ? ' held' : '') + '" data-charge="' + esc(x.id) + '"><button class="holdbox' + (x.hold ? ' on' : '') + '" data-act="hold" data-t="Pending" data-id="' + esc(x.id) + '" title="' +
         (x.hold ? 'On hold. Click to count it again' : 'Put on hold (counts toward the next pay period)') + '"></button><div><div class="item" style="padding:7px 0">' + esc(x.item) + '<span class="pchip">pending</span>' + (x.hold ? ' <span class="hchip">on hold</span>' : '') + '</div>' +
@@ -999,6 +1002,11 @@ function viewCards(m) {
         '<div class="r num' + (x.amount < 0 ? ' neg-txt' : '') + '">' + money(x.amount) + '</div>' + whoSelect(x, 'Pending') + '<div></div></div>';
     });
     h += '</div>';
+  }
+  var paidP = paidPendingShown.filter(function (e) { return e.cardId === card.id; });
+  if (paidP.length) {
+    h += '<div class="pend-head"><b>Paid while pending · ' + money(sum(paidP, function (e) { return e.amount; })) + '</b><span>Already paid with the card. Not counted for anyone; when they post they’re filed away on their own.</span></div><div class="rows pend">' +
+      paidP.map(function (e) { return '<div class="row g-ro" style="opacity:.6"><div>' + esc(e.item) + ' <span class="pchip">paid</span><div class="sub2">' + (e.date ? shortDate(e.date) + ' · ' : '') + esc(e.who || 'no label') + '</div></div><div class="r num">' + money(e.amount) + '</div></div>'; }).join('') + '</div>';
   }
   var refundOf = {};     // refund id -> the return it may belong to
   if (retItems.length) {
@@ -1068,6 +1076,47 @@ function payWaiting(card) {
   return p;
 }
 function markPaySeen(cardId) { var s = jsonSetting('cardPaySeen'); s[cardId] = today(); setSetting('cardPaySeen', JSON.stringify(s)); }
+/* ---- pending charges paid with the card (Eric, Nov 8, 2026). The card payment covers every pending charge that isn't on
+   hold, so clearing a card files those too: they go in the paidPending setting ([{bankId, cardId, item, amount, who, date, on,
+   posted}]). While they're still pending at the bank they're kept out of S.Pending (so nobody owes them again); when one
+   posts as a charge on the same card (same amount, within 10 days) that charge goes straight to History. An entry whose
+   charge never shows up is dropped after 21 days. */
+var paidPendingShown = [];
+function paidPendingList() { try { var v = JSON.parse(setting('paidPending', '') || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
+function payPendingOff(cardId) {
+  var list = paidPendingList(), have = {}; list.forEach(function (e) { have[e.bankId] = 1; });
+  var pp = (S.Pending || []).filter(function (x) { return x.cardId === cardId && !x.hold && !have[x.bankId]; });
+  pp.forEach(function (x) { list.push({ bankId: x.bankId, cardId: cardId, item: x.item, amount: +x.amount, who: x.who || '', date: x.date || '', on: today(), posted: '' }); });
+  if (pp.length) setSetting('paidPending', JSON.stringify(list));
+  settlePaidPending();
+  return pp.length;
+}
+function settlePaidPending() {
+  if (!S._pendingAll) S._pendingAll = (S.Pending || []).slice();   // what the bank sent; S.Pending is this minus the paid ones
+  var list = paidPendingList(); paidPendingShown = [];
+  if (!list.length) { S.Pending = S._pendingAll.slice(); return; }
+  var live = {}; S._pendingAll.forEach(function (p) { live[p.bankId] = p; });
+  var used = {}, changed = false, t = today();
+  list = list.filter(function (e) {
+    if (e.posted) return dayGap(e.on, t) <= 30;                    // kept a while so it isn't filed twice
+    if (live[e.bankId]) { paidPendingShown.push(e); return true; }  // still pending at the bank
+    var hit = S.Charges.filter(function (c) {
+      return !used[c.id] && c.cardId === e.cardId && Math.abs(+c.amount - e.amount) < 0.005 && !c.ret &&
+        (!e.date || !c.date || (c.date >= addDays(e.date, -3) && c.date <= addDays(e.date, 10)));
+    })[0];
+    if (hit) {
+      used[hit.id] = 1; changed = true; e.posted = hit.id;
+      upsert('History', { id: hit.id, cardId: hit.cardId, item: hit.item + ' (paid while pending)', amount: hit.amount, who: hit.who || e.who || '', date: hit.date || '', clearedOn: e.on });
+      removeIds('Charges', [hit.id]);
+      return true;
+    }
+    if (dayGap(e.on, t) > 21) { changed = true; return false; }
+    return true;
+  });
+  var gone = {}; paidPendingShown.forEach(function (e) { gone[e.bankId] = 1; });
+  S.Pending = S._pendingAll.filter(function (p) { return !gone[p.bankId]; });
+  if (changed) setSetting('paidPending', JSON.stringify(list));
+}
 /* ---- does each card add up? (Eric, Nov 8, 2026) The bank's balance for a linked card should equal every posted charge the
    app still has on that card, on hold and being returned included (they're still on the bank's balance; pending charges
    aren't). More than $30 apart means something was missed: a deleted or missing charge, a refund, interest or a fee.
@@ -1077,7 +1126,8 @@ function cardCheck(card) {
   var acct = (S.BankAccounts || []).filter(function (a) { return a.cardId === card.id; })[0];
   if (!acct || card.paid || payWaiting(card)) return null;
   var bank = r2(-(+acct.balance || 0));
-  var app = r2(sum(S.Charges.filter(function (c) { return c.cardId === card.id; }), function (c) { return c.amount; }));
+  var app = r2(sum(S.Charges.filter(function (c) { return c.cardId === card.id; }), function (c) { return c.amount; }) -
+    sum(paidPendingShown.filter(function (e) { return e.cardId === card.id; }), function (e) { return e.amount; }));   // paid while pending: a credit at the bank until they post
   var off = r2(bank - app);
   return { card: card, bank: bank, app: app, off: off, warn: Math.abs(off) > CARD_CHECK_LIMIT };
 }
@@ -2429,6 +2479,7 @@ function prep() {
   try { applyRules(); } catch (e) { console.error(e); }
   // payroll answers itself
   try { (S.Checking || []).forEach(function (r) { if (!r.manual && !r.kind && r.amount > 0 && PAYROLL.test(r.name || '')) setKind(r.id, 'pay'); }); } catch (e) { console.error(e); }
+  try { settlePaidPending(); } catch (e) { console.error(e); }
   try { autoWrap(); } catch (e) { console.error(e); }
 }
 /* if a pay period was never wrapped up and another paycheck has already landed after the next one, file it */
@@ -2835,6 +2886,14 @@ document.addEventListener('click', function (e) {
       if (e.target.closest('[data-m="no"]') || e.target === elr) closeModal();
     };
   }
+  else if (a === 'pendpaid') {
+    var pcard = find('Cards', id), pl = (S.Pending || []).filter(function (x) { return x.cardId === id && !x.hold; });
+    confirmBox('Already paid?', 'This marks ' + pl.length + ' pending charge' + (pl.length === 1 ? '' : 's') + ' on ' + esc(pcard.name) + ' (' + money(sum(pl, function (x) { return x.amount; })) +
+      ') as paid with your last card payment. They stop counting for anyone and are filed away when they post. Charges on hold aren’t touched.', 'Mark paid', function () {
+      undoLabel = 'marking pending as paid'; var n = payPendingOff(id); render();
+      toast(n + ' pending charge' + (n === 1 ? '' : 's') + ' marked paid <button class="toast-btn" data-act="undo">Undo</button>', 8000);
+    });
+  }
   else if (a === 'hold') {
     var ht = b.dataset.t || 'Charges', hc = find(ht, id);
     undoLabel = (hc.hold ? 'taking “' : 'putting “') + hc.item + (hc.hold ? '” off hold' : '” on hold');
@@ -2854,7 +2913,9 @@ document.addEventListener('click', function (e) {
   else if (a === 'clearcard') {
     var cc = find('Cards', id), n = S.Charges.filter(function (x) { return x.cardId === id && counts(x); }).length;
     var nh = S.Charges.filter(function (x) { return x.cardId === id && !counts(x); }).length;
+    var npd = (S.Pending || []).filter(function (x) { return x.cardId === id && !x.hold; }).length;
     confirmBox('Clear ' + cc.name + '?', 'This takes its ' + n + ' charge' + (n === 1 ? '' : 's') + ' off the card (search can still find them) and sets it back to unpaid.' +
+      (npd ? ' Its ' + npd + ' pending charge' + (npd === 1 ? '' : 's') + ' not on hold were paid too, so they won’t count again when they post.' : '') +
       (nh ? ' The ' + nh + ' on hold or being returned stay on the card.' : '') + ' Do this after you’ve paid the card.', 'Clear charges', function () {
       undoLabel = 'clearing ' + cc.name;
       var day = today();
@@ -2874,7 +2935,7 @@ document.addEventListener('click', function (e) {
       });
       // save a copy of each charge to History first, so search can still find it after the card is cleared
       keepRows.forEach(function (r) { upsert('History', r); });
-      removeIds('Charges', toClear.map(function (x) { return x.id; })); upsert('Cards', { id: id, paid: false }); markPaySeen(id); render();
+      removeIds('Charges', toClear.map(function (x) { return x.id; })); payPendingOff(id); upsert('Cards', { id: id, paid: false }); markPaySeen(id); render();
       toast(esc(cc.name) + ' cleared <button class="toast-btn" data-act="undo">Undo</button>', 8000);
     });
   }

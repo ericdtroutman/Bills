@@ -464,6 +464,46 @@ SCENARIOS.push({
   ]
 });
 
+// Clearing a card also files its pending charges that weren't on hold (Nov 8, 2026): the payment covered them
+SCENARIOS.push({
+  title: 'Clearing a card files the pending charges it paid',
+  about: 'Chase has a posted Split charge, a pending 7 Brew (Arianna, not on hold) and a pending Target on hold. Paying the card covers the 7 Brew, so clearing it takes the 7 Brew out too; when it posts it is filed on its own. The Target stays for next time.',
+  needs: 'payPendingOff',
+  data: (function () {
+    var d = startingData();
+    d.Pending = [{ id: 'pd_a', cardId: 'c_chase', item: '7 Brew Coffee', amount: 8.59, who: 'Arianna', date: '2026-11-06', bankId: 'bk_pa', hold: false },
+                 { id: 'pd_b', cardId: 'c_chase', item: 'Target', amount: 60, who: 'Arianna', date: '2026-11-07', bankId: 'bk_pb', hold: true }];
+    d.BankAccounts.push({ id: 'chase|1', name: 'Chase (1516)', bank: 'Chase', cardId: 'c_chase', balance: -241.60 });
+    return d;
+  })(),
+  steps: [
+    { t: 'Before clearing: Arianna owes half of Costco + the pending 7 Brew', run: function () {},
+      check: function () { var m = A.calc(); return [money('Arianna with pending', 120.80 + 8.59, m.arianna + m.pend.arianna)]; } },
+    { t: 'Pay and clear Chase', run: function () {
+        var btn = A.document.createElement('button'); btn.dataset.act = 'clearcard'; btn.dataset.id = 'c_chase'; A.document.body.appendChild(btn); btn.click();
+        A.document.querySelector('#modal [data-m="yes"]').click();
+        A.S.BankAccounts.filter(function (a) { return a.id === 'chase|1'; })[0].balance = 8.59;   // paid incl. the pending: a credit until it posts
+      },
+      check: function () { var m = A.calc(); return [
+        money('Arianna owes nothing now (the 7 Brew was paid)', 0, m.arianna + m.pend.arianna),
+        yes('The on-hold Target is still pending', A.S.Pending.some(function (p) { return p.id === 'pd_b'; })),
+        yes('The 7 Brew is out of pending', !A.S.Pending.some(function (p) { return p.id === 'pd_a'; })),
+        yes('Card check: bank credit matches the paid pending (no warning)', !A.cardCheck(A.find('Cards', 'c_chase')).warn, 'off ' + A.cardCheck(A.find('Cards', 'c_chase')).off),
+        (function () { var was = A.selCard; A.selCard = 'c_chase'; var t = pageText('Cards'); A.selCard = was; return yes('Cards page shows it as paid while pending', t.indexOf('Paid while pending') >= 0); })(), pagesDraw()]; } },
+    { t: 'Next sync: the 7 Brew posts as a charge with a new id', run: function () {
+        var data = JSON.parse(JSON.stringify(A.S)); delete data._pendingAll;
+        data.Pending = data.Pending.filter(function (p) { return p.id !== 'pd_a'; });
+        data.Charges.push({ id: 'bk_post', cardId: 'c_chase', item: '7 Brew Coffee', amount: 8.59, who: '', order: 50, date: '2026-11-07', bankId: 'bk_new', hold: false, settled: '' });
+        data.BankAccounts.filter(function (a) { return a.id === 'chase|1'; })[0].balance = 0;
+        A.S = data; A.prep();
+      },
+      check: function () { var m = A.calc(); return [
+        yes('The posted 7 Brew was filed away (off the card)', !A.S.Charges.some(function (c) { return c.id === 'bk_post'; }) && A.paidPendingList().some(function (e) { return e.posted === 'bk_post'; })),
+        money('Nobody owes it again', 0, m.arianna + m.pend.arianna + m.untagged),
+        yes('Card check still adds up', !A.cardCheck(A.find('Cards', 'c_chase')).warn)]; } }
+  ]
+});
+
 // Nov 8, 2026: Eric's real joint on the day Left said $2.85 but the bank said the joint was $79.76 short
 SCENARIOS.push({
   title: 'Left from the bank (Nov 8 numbers)',
