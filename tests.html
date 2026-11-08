@@ -145,6 +145,7 @@ function typeIn(dir, amount, kind, date, note) {
   return A.S.Checking[before].id;
 }
 function wrapText() { var div = A.document.createElement('div'); div.innerHTML = A.wrapPanel(mm(), A.calc()); return div.textContent.replace(/\s+/g, ' '); }
+function onDay(d, fn) { var real = A.today; A.today = function () { return d; }; try { return fn(); } finally { A.today = real; } }
 function pageText(view) { var div = A.document.createElement('div'); div.innerHTML = A['view' + view](A.calc()); return div.textContent.replace(/\s+/g, ' '); }
 function fmt(n) { return (n < 0 ? '−' : '') + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
@@ -270,8 +271,9 @@ var SCENARIOS = [
 // Joint checking lines from the bank (built in the preview first; skipped on a copy that doesn't have it yet)
 function jointData() {
   var d = startingData();
-  d.BankAccounts.push({ id: 'mt|joint', name: 'Joint Checking (7298)', bank: 'M&T Bank', cardId: '', balance: 3000 });
+  d.BankAccounts.push({ id: 'mt|joint', name: 'Joint Checking (7298)', bank: 'M&T Bank', cardId: '', balance: 1000 });
   d.Bills.push({ id: 'b_spec', payOn: '15th', name: 'Spectrum', total: 95, us: 95, paid: false, order: 3, status: '' });
+  d.Bills.forEach(function (b) { b.status = 'paid'; });   // this month's bills already paid (green)
   d.Settings.push({ id: 'jointSince', value: '2026-10-20' });
   d.JointKinds = [];
   d.JointBank = [
@@ -287,7 +289,7 @@ function jointData() {
 function jointLine(id) { return A.calc().jointBank.lines.filter(function (l) { return l.id === id; })[0] || {}; }
 SCENARIOS.push({
   title: 'Debit spending from joint checking',
-  about: 'Joint checking lines come in from the bank. Debit spending you haven\'t answered counts against the joint\'s Left; transfers and bills don\'t. The joint is already $108.40 short from the card charges.',
+  about: 'Joint checking is linked, so Left comes from the bank: $1,000 balance, minus the $20 Aldi still pending, minus the $1,108.40 joint charge on the card (every bill is green). The joint is $128.40 short.',
   needs: 'jointMath',
   data: jointData(),
   steps: [
@@ -298,20 +300,21 @@ SCENARIOS.push({
         yes('Spectrum guessed as the Spectrum bill', jointLine('jb_spec').guess === 'bill'),
         yes('Tops is before the joint started over, so it isn\'t counted', !jointLine('jb_old').counted),
         yes('Two lines need an answer', j.ask === 2, j.ask + ' need an answer'),
-        money('Joint is short', 188.40, mm().jointShort), money('Your half', 94.20, mm().jointHalf),
+        money('Left, from the bank', -128.40, m.jointLeft), money('Joint is short', 128.40, mm().jointShort), money('Your half', 64.20, mm().jointHalf),
         says('Joint page shows the bank balance', 'Joint checking at the bank', pageText('Joint')), pagesDraw()]; } },
     { t: 'Search for "wegmans" and for 95', run: function () {},
       check: function () {
         A.query = 'wegmans'; var w = A.viewSearch(); A.query = '95'; var s = A.viewSearch(); A.query = '';
         return [yes('Search finds Wegmans in joint checking', /1 in joint checking/.test(w) && /Wegmans/.test(w)),
                 yes('Search by amount finds the Spectrum line', /in joint checking/.test(s) && /Spectrum/.test(s))]; } },
-    { t: 'Joint after bills (on Oct 26): bank $3,000 minus bills not paid yet; Spectrum already left the bank, so it doesn\'t count twice', run: function () {},
+    { t: 'Joint after bills (on Oct 26, bills not green yet): bank $1,000 minus bills not paid yet; Spectrum already left the bank, so it doesn\'t count twice', run: function () {},
       check: function () {
         var realToday = A.today; A.today = function () { return '2026-10-26'; };
+        A.S.Bills.forEach(function (x) { x.status = ''; });
         try {
           var b = A.jointBills(A.calc().jointBank);
           var out = [money('Bills still to come out (both $2,812 bills; Spectrum paid at the bank)', 5624, b.dueAmt),
-                     money('Joint after bills', -2624, b.left)];
+                     money('Joint after bills', -4624, b.left)];
           var u = A.find('Bills', 'b_15th'); u.status = 'paid';
           out.push(money('Ticking Utilities green takes it out', 2812, A.jointBills(A.calc().jointBank).dueAmt));
           A.S.Bills.push({ id: 'b_ring', payOn: '15th', name: 'Ring', total: 11, us: 11, paid: false, order: 9, status: '' });
@@ -320,29 +323,31 @@ SCENARIOS.push({
           out.push(money('Ring charged on a card (labeled Bills) counts once, not again as the Ring bill', 2812 + 10.86, b2.dueAmt));
           A.find('Bills', 'b_ring').status = 'paid';
           out.push(money('Ticking Ring green: its card charge still counts until the card is paid', 2812 + 10.86, A.jointBills(A.calc().jointBank).dueAmt));
-          A.S.Bills = A.S.Bills.filter(function (x) { return x.id !== 'b_ring'; }); A.S.Charges = A.S.Charges.filter(function (x) { return x.id !== 'ch_ring'; }); u.status = '';
+          A.S.Bills = A.S.Bills.filter(function (x) { return x.id !== 'b_ring'; }); A.S.Charges = A.S.Charges.filter(function (x) { return x.id !== 'ch_ring'; });
           out.push(says('Joint page shows Joint after bills', 'Joint after bills', pageText('Joint')));
           return out;
-        } finally { A.today = realToday; }
+        } finally { A.today = realToday; A.S.Bills.forEach(function (x) { x.status = 'paid'; }); }
       } },
     { t: 'Answer: Wegmans is joint spending, Aldi gets left out', run: function () { A.setJointKind('jb_weg', 'spend'); A.setJointKind('jb_aldi', 'ignore'); },
       check: function () { var j = A.calc().jointBank; return [
         money('Debit spending counted', 60, j.spend), yes('Nothing left to answer', j.ask === 0, j.ask + ' still need an answer'),
-        money('Joint is short', 168.40, mm().jointShort)]; } },
+        money('Joint is short (answers don\'t move the bank; Aldi is still pending)', 128.40, mm().jointShort)]; } },
     { t: 'Aldi posts at the bank under a new id', run: function () {
         A.S.JointBank = A.S.JointBank.filter(function (r) { return r.id !== 'jb_aldi'; });
         A.S.JointBank.push({ id: 'jb_aldi_posted', date: '2026-10-27', name: 'Aldi', amount: -20, pending: false });
+        A.S.BankAccounts.filter(function (a) { return a.id === 'mt|joint'; })[0].balance = 980;   // the bank took it out
       }, check: function () { var l = jointLine('jb_aldi_posted'); return [
+        money('Still short the same: the $20 moved from pending into the balance, counted once', 128.40, mm().jointShort),
         yes('The answer carried over from the pending charge', l.kind === 'ignore' && l.carried, 'kind: ' + (l.kind || 'none')),
         money('Debit spending counted', 60, A.calc().jointBank.spend)]; } },
     { t: 'Spectrum was really joint spending', run: function () { A.setJointKind('jb_spec', 'spend'); },
-      check: function () { return [money('Debit spending counted', 155, A.calc().jointBank.spend), money('Joint is short', 263.40, mm().jointShort)]; } },
+      check: function () { return [money('Debit spending counted', 155, A.calc().jointBank.spend), money('Joint is short (already out of the balance)', 128.40, mm().jointShort)]; } },
     { t: 'Clear out-of-pocket (the joint starts over)', run: function () {
         var btn = A.document.createElement('button'); btn.dataset.act = 'clearcash'; A.document.body.appendChild(btn); btn.click();
         A.document.querySelector('#modal [data-m="yes"]').click();
       }, check: function () { return [
         yes('Joint spending now counts from today', A.setting('jointSince', '') === A.today(), 'since ' + A.setting('jointSince', '')),
-        money('Debit spending counted', 0, A.calc().jointBank.spend), money('Joint is short', 108.40, mm().jointShort), pagesDraw()]; } }
+        money('Debit spending counted', 0, A.calc().jointBank.spend), money('Joint is short', 128.40, mm().jointShort), pagesDraw()]; } }
   ]
 });
 
@@ -401,6 +406,48 @@ SCENARIOS.push({
         money('The rest goes to Ally', 245, x.rest)]; } },
     { t: 'Only $40 left', run: function () {}, check: function () { var x = A.fundSplit(40); return [
         money('GSA gets all of it', 40, x.toFunds), money('Nothing left for Ally', 0, x.rest)]; } }
+  ]
+});
+
+// Nov 8, 2026: Eric's real joint on the day Left said $2.85 but the bank said the joint was $79.76 short
+SCENARIOS.push({
+  title: 'Left from the bank (Nov 8 numbers)',
+  about: 'Joint checking $1,497.84. Still to go out: Verizon $180 (not green yet), $703.73 of bills on the cards, and $693.87 of joint card charges ($683 Joint + half of a $21.74 Eric + Joint). The joint ends $79.76 short, $39.88 each.',
+  needs: 'jointBills',
+  data: (function () {
+    var d = startingData();
+    d.BankAccounts.push({ id: 'mt|joint', name: 'Joint Checking (7298)', bank: 'M&T Bank', cardId: '', balance: 1497.84 });
+    d.Charges = [
+      { id: 'n_joint', cardId: 'c_chase', item: 'Joint spending', amount: 683, who: 'Joint', order: 1, date: '2026-10-28', hold: false, settled: '' },
+      { id: 'n_ej', cardId: 'c_chase', item: 'Google One', amount: 21.74, who: 'Eric + Joint', order: 2, date: '2026-10-31', hold: false, settled: '' },
+      { id: 'n_bills', cardId: 'c_chase', item: 'Electric Gas', amount: 703.73, who: 'Bills', order: 3, date: '2026-10-26', hold: false, settled: '' },
+      { id: 'n_eric', cardId: 'c_amex', item: 'Games', amount: 66.16, who: 'Eric', order: 4, date: '2026-11-05', hold: false, settled: '' }];
+    d.Bills = [{ id: 'n_mort', payOn: '1st', name: 'Mortgage', total: 2180, us: 1205, paid: true, order: 1, status: 'paid' },
+               { id: 'n_ph', payOn: '1st', name: 'Arianna phone', total: 180, us: 180, paid: false, order: 2, status: 'half' },
+               { id: 'n_food', payOn: '1st', name: 'Food', total: 270, us: 270, paid: false, order: 3, status: '' }];
+    d.Joint = [{ id: 'n_j1', item: 'Groceries', amount: 270, order: 1 }, { id: 'n_j2', item: 'Joint budget', amount: 426.72, order: 2 }];
+    d.JointKinds = []; d.JointBank = [{ id: 'n_l1', date: '2026-10-27', name: 'Ownerschoice', amount: -2179.81, pending: false }];
+    return d;
+  })(),
+  steps: [
+    { t: 'Before paying: Left comes from the bank, not from what was typed into the joint', run: function () {},
+      check: function () { return onDay('2026-11-08', function () { var m = A.calc(); return [
+        money('Left', -79.76, m.jointLeft), money('Joint is short', 79.76, mm().jointShort), money('Each half', 39.88, mm().jointHalf),
+        money('Bills still to come out (Verizon + bills on cards; Food is spending money)', 883.73, m.bankJoint.bills.dueAmt)]; }); } },
+    { t: 'Verizon shows up pending in joint checking, not answered yet', run: function () {
+        A.S.JointBank.push({ id: 'n_vz', date: '2026-11-08', name: 'Verizon Wireless', amount: -180, pending: true }); },
+      check: function () { return onDay('2026-11-08', function () { var m = A.calc(); return [
+        money('Pending Verizon comes off once (it pays the phone bill, so the bill stops counting)', -79.76, m.jointLeft),
+        money('Pending out of joint checking', 180, m.bankJoint.pendingOut)]; }); } },
+    { t: 'Verizon posts: the bank balance drops by $180', run: function () {
+        A.S.JointBank = A.S.JointBank.filter(function (r) { return r.id !== 'n_vz'; });
+        A.S.JointBank.push({ id: 'n_vz2', date: '2026-11-09', name: 'Verizon Wireless', amount: -180, pending: false });
+        A.S.BankAccounts.filter(function (a) { return a.id === 'mt|joint'; })[0].balance = 1317.84; },
+      check: function () { return onDay('2026-11-09', function () { return [money('Left stays the same', -79.76, A.calc().jointLeft)]; }); } },
+    { t: 'Tick the phone bill green', run: function () { A.find('Bills', 'n_ph').status = 'paid'; },
+      check: function () { return onDay('2026-11-09', function () { return [money('Left stays the same', -79.76, A.calc().jointLeft), pagesDraw()]; }); } },
+    { t: 'You both send the $39.88 shortfall in', run: function () { A.S.BankAccounts.filter(function (a) { return a.id === 'mt|joint'; })[0].balance = 1317.84 + 79.76; },
+      check: function () { return onDay('2026-11-09', function () { return [money('Left', 0, A.calc().jointLeft), money('Joint is short', 0, mm().jointShort)]; }); } }
   ]
 });
 

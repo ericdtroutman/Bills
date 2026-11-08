@@ -679,6 +679,26 @@ function calc() {
   var ourTotal = us1 + us15, half = ourTotal / 2;
   var jb = { spend: 0, ask: 0, lines: [] };
   try { if (jointAcct()) jb = jointMath(); } catch (e) { console.error(e); }
+  var cash = sum(S.JointCash || [], function (j) { return j.amount; });
+  var jointLeft = inJoint - tag.Joint - tag[EJ] / 2 - cash - jb.spend, bankJoint = null;
+  /* With joint checking linked, Left comes from the bank (Eric, Nov 8, 2026), so it can't drift from what's really there:
+     joint checking balance − joint checking lines still pending − bill money still in it (jointBills) − joint charges on
+     cards not marked paid yet − out-of-pocket owed back. Debit spending has already left the balance, so it isn't taken out
+     again. Eric's and Arianna's card shares aren't counted: they come into the joint and go straight back out with the card
+     payment. Cards marked Paid have already been paid, so their charges no longer count. */
+  var acct = jointAcct();
+  if (acct) {
+    try {
+      var unpaidCard = function (c) { var k = find('Cards', c.cardId); return !(k && k.paid); };
+      var jl = live.filter(unpaidCard);
+      var jCards = r2(sum(jl.filter(function (c) { return c.who === 'Joint'; }), function (c) { return c.amount; }) +
+                      sum(jl.filter(function (c) { return c.who === EJ; }), function (c) { return c.amount; }) / 2);
+      var pendOut = r2(-sum(jb.lines.filter(function (l) { return l.row.pending && l.row.amount < 0 && l.how !== 'typed'; }), function (l) { return l.row.amount; }));
+      var jbl = jointBills(jb);
+      bankJoint = { balance: +acct.balance || 0, pendingOut: pendOut, bills: jbl, cards: jCards, cash: r2(cash) };
+      jointLeft = r2(bankJoint.balance - pendOut - jbl.dueAmt - jCards - cash);
+    } catch (e) { console.error(e); bankJoint = null; }
+  }
   return {
     tag: tag, onCards: onCards, untagged: Math.round((onCards - tagged) * 100) / 100,
     needN: live.filter(function (c) { return WHO.indexOf(c.who) < 0; }).length,
@@ -686,8 +706,8 @@ function calc() {
     returning: S.Charges.filter(function (c) { return c.ret; }),
     pend: pendingMath(),
     eric: tag.Eric + tag.Split / 2 + tag[EJ] / 2, arianna: tag.Arianna + tag.Split / 2, jointCards: tag.Joint + tag[EJ] / 2,
-    inJoint: inJoint, cash: sum(S.JointCash || [], function (j) { return j.amount; }),
-    jointBank: jb, jointLeft: inJoint - tag.Joint - tag[EJ] / 2 - sum(S.JointCash || [], function (j) { return j.amount; }) - jb.spend,
+    inJoint: inJoint, cash: cash, bankJoint: bankJoint,
+    jointBank: jb, jointLeft: jointLeft,
     us1: us1, us15: us15, tot1: sum(b1, function (b) { return b.total; }), tot15: sum(b15, function (b) { return b.total; }),
     ourTotal: ourTotal, half: half, paycheck: half / 2, bank: half - us15,
     ferris: sum(S.Bills, function (b) { return b.total; }) - ourTotal,
@@ -934,12 +954,14 @@ function sinceNudge(m) {
 }
 
 function viewJoint(m) {
-  var jb = m.jointBank, spent = m.jointCards + m.cash + jb.spend, acct = jointAcct(), jbl = null;
-  try { if (acct) jbl = jointBills(jb); } catch (e) { console.error(e); }
-  var h = '<h1>Joint Account</h1><p class="sub">What’s in the joint, minus joint charges on the cards, debit spending from joint checking, and anything paid out of pocket.</p>';
+  var jb = m.jointBank, spent = m.jointCards + m.cash + jb.spend, acct = jointAcct(), bj = m.bankJoint, jbl = bj ? bj.bills : null;
+  var h = '<h1>Joint Account</h1><p class="sub">' + (bj ? 'Left starts from the joint checking balance at the bank, then takes out bills not paid yet, bills on the cards, joint charges on the cards and anything paid out of pocket.'
+    : 'What’s in the joint, minus joint charges on the cards, debit spending from joint checking, and anything paid out of pocket.') + '</p>';
   h += '<div class="tiles">' + tile('In the joint account', m.inJoint) +
     tile('Spent from the joint', spent, { hint: money(m.jointCards) + ' on cards · ' + (acct ? money(jb.spend) + ' debit · ' : '') + money(m.cash) + ' out of pocket' }) +
-    tile('Left', m.jointLeft, { sign: true, hint: m.pend.joint ? 'After pending: ' + money(m.jointLeft - m.pend.joint) : '' }) +
+    tile('Left', m.jointLeft, { sign: true, warn: m.jointLeft - m.pend.joint < -0.004, hint: (bj ? 'Bank ' + money(bj.balance) + (bj.pendingOut ? ' − ' + money(bj.pendingOut) + ' pending' : '') +
+      ' − ' + money(bj.bills.dueAmt) + ' bills − ' + money(bj.cards) + ' joint on cards' + (bj.cash ? ' − ' + money(bj.cash) + ' out of pocket' : '') + '. ' : '') +
+      (m.pend.joint ? 'After pending: ' + money(m.jointLeft - m.pend.joint) : '') }) +
     (acct ? tile('Joint checking at the bank', acct.balance, { hint: jb.ask ? jb.ask + ' line' + (jb.ask === 1 ? ' needs' : 's need') + ' an answer' : 'Holds bill money too', warn: !!jb.ask }) : '') +
     (jbl ? tile('Joint after bills', jbl.left, { sign: true,
       hint: jbl.dueAmt ? 'Bank minus ' + money(jbl.dueAmt) + ' in bills still to come out' : 'No bill money left to come out' }) : '') + '</div>';
@@ -1082,9 +1104,10 @@ function jointBills(jm) {
   };
   (jm.lines || []).slice().reverse().forEach(function (l) {          // oldest first
     var r = l.row;
-    if (r.amount < 0 && r.date >= win.from && r.date <= win.to) payFor(r.name, -r.amount, l.how === 'bill' || l.how === 'move');
+    // amount-only matches: lines marked bill/transfer, or a not-yet-answered line of $25+ (e.g. a pending Verizon payment)
+    if (r.amount < 0 && r.date >= win.from && r.date <= win.to) payFor(r.name, -r.amount, l.how === 'bill' || l.how === 'move' || (!l.answered && -r.amount >= 25));
   });
-  var onCards = S.Charges.filter(function (c) { return c.who === 'Bills' && counts(c); })
+  var onCards = S.Charges.filter(function (c) { var k = find('Cards', c.cardId); return c.who === 'Bills' && counts(c) && !(k && k.paid); })
     .concat((S.Pending || []).filter(function (p) { return p.who === 'Bills' && !p.hold; }));
   onCards.forEach(function (c) { payFor(c.item, +c.amount, true); });
   var due = bills.filter(function (x) { return x.left > 0.004; });
@@ -1109,7 +1132,7 @@ function jointBankPanel(jm, jbl) {
     '<div style="font-size:20px;font-weight:800">Joint checking at the bank</div><div class="sub2">' + esc(acctLabel(acct)) + ' · M&amp;T balance' +
     (jm.pending ? ' · ' + money(jm.pending) + ' pending' : '') + '</div></div>' +
     '<div class="big num">' + money(acct.balance) + '<small>at the bank</small></div></div>';
-  h += '<div class="fline top"><div><b>Debit spending from the joint</b><div class="sub2">Counts against Left, like out-of-pocket. Not-answered lines count until you say otherwise.</div></div>' +
+  h += '<div class="fline top"><div><b>Debit spending from the joint</b><div class="sub2">Already out of the bank balance, so Left includes it. Answering lines keeps this list and the bills check right.</div></div>' +
     '<div class="num neg-out">− ' + money(jm.spend) + '</div><div class="fl-tools"><span class="sub2" style="margin:0">Since</span>' +
     '<input class="datein" style="width:auto;padding:4px 8px" type="date" data-t="Settings" data-id="jointSince" data-f="value" value="' + esc(jm.since) + '" title="Joint spending counts from this date. Clearing out-of-pocket moves it to that day."></div></div>';
   if (jbl) {
@@ -1149,7 +1172,7 @@ function jointBankPanel(jm, jbl) {
       '<div class="num ' + (r.amount > 0 ? 'pos-txt' : l.spend ? 'neg-out' : '') + '">' + (r.amount > 0 ? '+ ' : '− ') + money(Math.abs(r.amount)) + '</div>' +
       '<div class="fl-tools">' + tools + '</div></div>';
   }).join('') : '<div class="empty">No lines yet. They come in with the daily bank sync.</div>';
-  h += '</div><div class="pfoot"><span style="font-size:12px;color:var(--muted)">The bank balance also holds bill and card money, so it won’t match Left. Answers are kept by the bank line, so they stay put when the bank list refreshes.</span>' + toggle + '</div></section>';
+  h += '</div><div class="pfoot"><span style="font-size:12px;color:var(--muted)">Left is this balance minus the bill and card money still waiting to go out. Answers are kept by the bank line, so they stay put when the bank list refreshes.</span>' + toggle + '</div></section>';
   return h;
 }
 
