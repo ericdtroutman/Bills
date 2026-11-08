@@ -313,10 +313,14 @@ SCENARIOS.push({
           var out = [money('Bills still to come out (both $2,812 bills; Spectrum paid at the bank)', 5624, b.dueAmt),
                      money('Joint after bills', -2624, b.left)];
           var u = A.find('Bills', 'b_15th'); u.status = 'paid';
-          out.push(money('Ticking Utilities green takes it out', 2812, A.jointBills(A.calc().jointBank).dueAmt)); u.status = '';
-          A.setJointKind('jb_weg', 'bill');
-          out.push(yes('Wegmans marked Monthly bill but matching no bill gets flagged', A.jointBills(A.calc().jointBank).unmatched.length === 1));
-          A.setJointKind('jb_weg', '');
+          out.push(money('Ticking Utilities green takes it out', 2812, A.jointBills(A.calc().jointBank).dueAmt));
+          A.S.Bills.push({ id: 'b_ring', payOn: '15th', name: 'Ring', total: 11, us: 11, paid: false, order: 9, status: '' });
+          A.S.Charges.push({ id: 'ch_ring', cardId: 'c_amex', item: 'Ring', amount: 10.86, who: 'Bills', order: 99, date: '2026-10-25', hold: false });
+          var b2 = A.jointBills(A.calc().jointBank);
+          out.push(money('Ring charged on a card (labeled Bills) counts once, not again as the Ring bill', 2812 + 10.86, b2.dueAmt));
+          A.find('Bills', 'b_ring').status = 'paid';
+          out.push(money('Ticking Ring green: its card charge still counts until the card is paid', 2812 + 10.86, A.jointBills(A.calc().jointBank).dueAmt));
+          A.S.Bills = A.S.Bills.filter(function (x) { return x.id !== 'b_ring'; }); A.S.Charges = A.S.Charges.filter(function (x) { return x.id !== 'ch_ring'; }); u.status = '';
           out.push(says('Joint page shows Joint after bills', 'Joint after bills', pageText('Joint')));
           return out;
         } finally { A.today = realToday; }

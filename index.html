@@ -941,8 +941,8 @@ function viewJoint(m) {
     tile('Spent from the joint', spent, { hint: money(m.jointCards) + ' on cards · ' + (acct ? money(jb.spend) + ' debit · ' : '') + money(m.cash) + ' out of pocket' }) +
     tile('Left', m.jointLeft, { sign: true, hint: m.pend.joint ? 'After pending: ' + money(m.jointLeft - m.pend.joint) : '' }) +
     (acct ? tile('Joint checking at the bank', acct.balance, { hint: jb.ask ? jb.ask + ' line' + (jb.ask === 1 ? ' needs' : 's need') + ' an answer' : 'Holds bill money too', warn: !!jb.ask }) : '') +
-    (jbl ? tile('Joint after bills', jbl.left, { sign: true, warn: !!jbl.unmatched.length,
-      hint: jbl.dueAmt ? 'Bank minus ' + money(jbl.dueAmt) + ' in bills not paid yet' : 'Every bill is paid' }) : '') + '</div>';
+    (jbl ? tile('Joint after bills', jbl.left, { sign: true,
+      hint: jbl.dueAmt ? 'Bank minus ' + money(jbl.dueAmt) + ' in bills still to come out' : 'No bill money left to come out' }) : '') + '</div>';
   h += jointBankPanel(jb, jbl);
   var rows = S.Joint.slice().sort(byOrder);
   h += '<div class="cols"><section class="panel" style="--c:#E8590C"><div class="phead"><div class="grow"><div class="eyebrow">Money in</div>' +
@@ -1048,53 +1048,50 @@ function jointMath() {
            pending: r2(sum(rows.filter(function (r) { return r.pending; }), function (r) { return r.amount; })),
            ask: lines.filter(function (l) { return l.ask; }).length };
 }
-/* ---- bills still to come out of the joint (Nov 8, 2026). "After bills" = the joint checking balance minus the bills
-   (our part) that haven't left it yet. A bill already paid has already left the balance, so it must not count again:
-   a bill drops out when it's ticked green, and joint checking lines that look like it (same name, or for lines marked
-   Monthly bill / Transfer, the same amount within $1) take their amount off what's still due. Each bill's lines are looked
-   for from its paycheck (the one that pays that 1st or 15th) until the next month's. Bills that are the joint's own
-   spending money (Food, Extra, or a name on "What's in the joint") are left out: Left already tracks that money. */
-function jointBillWindow(payOn, t) {
-  var day = payOn === '1st' ? '-01' : '-15';
-  var checks = payPlan().filter(function (p) { return p.bill && p.bill.slice(7) === day; });
+/* ---- bills still to come out of the joint (Nov 8, 2026). "Joint after bills" = the joint checking balance minus the bill
+   money that is still sitting in it. Each dollar counts once:
+   - a bill that isn't green yet counts at its "our part", less any joint checking line or Bills-labeled card charge that
+     looks like it (same name, or the same amount within $1);
+   - a Bills-labeled card charge still on a card counts until the card is cleared: green or not, that money hasn't left
+     the joint yet (it goes out with the card payment back to M&T);
+   - a green bill paid straight from joint checking counts nothing: it already left the balance.
+   Payments are looked for since the paycheck that paid this month's 1st bills (Eric pays the 1st and 15th bills together).
+   Food, Extra and anything named on "What's in the joint" are spending money: Left tracks those. */
+function jointBillWindow(t) {
+  var checks = payPlan().filter(function (p) { return p.bill && p.bill.slice(8) === '01'; });
   var cur = null, nxt = null;
   for (var i = 0; i < checks.length; i++) { if (checks[i].date <= t) { cur = checks[i]; nxt = checks[i + 1] || null; } }
-  return { from: cur ? addDays(cur.date, -3) : addDays(t, -31), to: nxt ? addDays(nxt.date, -4) : t, bill: cur ? cur.bill : '' };
+  return { from: cur ? addDays(cur.date, -3) : addDays(t, -31), to: nxt ? addDays(nxt.date, -4) : t };
 }
 function spendingBill(b) {
-  var k = storeKey(b.name), first = k.split(' ')[0];
+  var first = storeKey(b.name).split(' ')[0];
   if (/^(food|groceries|grocery|extra|other|spending)$/.test(first)) return true;
   return (S.Joint || []).some(function (j) { return storeKey(j.item).split(' ')[0] === first; });
 }
 function jointBills(jm) {
-  var t = today(), win = { '1st': jointBillWindow('1st', t), '15th': jointBillWindow('15th', t) };
-  var bills = (S.Bills || []).filter(function (b) { return (+b.us || 0) > 0 && !spendingBill(b) && win[b.payOn]; }).map(function (b) {
-    return { b: b, owed: +b.us, left: b.status === 'paid' ? 0 : +b.us, ticked: b.status === 'paid', paidBy: [], win: win[b.payOn] };
-  });
-  var inWin = function (x, l) { return l.row.date >= x.win.from && l.row.date <= x.win.to; };
-  var unmatched = [];
+  var win = jointBillWindow(today());
+  var bills = (S.Bills || []).filter(function (b) { return (+b.us || 0) > 0 && b.status !== 'paid' && !spendingBill(b); })
+    .map(function (b) { return { b: b, owed: +b.us, left: +b.us, paidBy: [] }; });
+  // a payment (bank line or card charge) that looks like one of the bills not paid yet takes its amount off that bill
+  var payFor = function (name, amt, byAmount) {
+    var k = storeKey(name).split(' ')[0];
+    var open = bills.filter(function (x) { return x.left > 0.004; });
+    var hit = open.filter(function (x) { var bk = storeKey(x.b.name).split(' ')[0]; return bk.length > 2 && !/^(savings?|insurance|dance)$/.test(bk) && bk === k; })[0];
+    if (!hit && byAmount) hit = open.filter(function (x) { return Math.abs(amt - x.left) <= 1.005 || Math.abs(amt - x.owed) <= 1.005 || Math.abs(amt - (+x.b.total || 0)) <= 1.005; })[0];
+    if (hit) { hit.left = amt >= hit.left - 1.005 ? 0 : r2(hit.left - amt); hit.paidBy.push(name); }   // within $1 counts as paid in full
+  };
   (jm.lines || []).slice().reverse().forEach(function (l) {          // oldest first
-    var r = l.row; if (r.amount >= 0) return;
-    var amt = -r.amount, k = storeKey(r.name).split(' ')[0];
-    var find2 = function (list) {
-      var h = list.filter(function (x) {
-        var bk = storeKey(x.b.name).split(' ')[0];
-        return bk.length > 2 && !/^(savings?|insurance|dance)$/.test(bk) && bk === k;
-      })[0];
-      if (!h && (l.how === 'bill' || l.how === 'move'))
-        h = list.filter(function (x) { return Math.abs(amt - x.left) <= 1.005 || Math.abs(amt - x.owed) <= 1.005 || Math.abs(amt - (+x.b.total || 0)) <= 1.005; })[0];
-      return h;
-    };
-    var hit = find2(bills.filter(function (x) { return !x.ticked && x.left > 0.004 && inWin(x, l); }));
-    if (hit) { hit.left = r2(Math.max(0, hit.left - amt)); hit.paidBy.push(l); return; }
-    // a line marked Monthly bill that isn't one of these bills (or is a green one) can't be checked against a bill;
-    // ask Eric to tick it instead of guessing, so nothing is counted twice
-    var inAny = bills.some(function (x) { return inWin(x, l); });
-    if (l.how === 'bill' && inAny && !find2(bills.filter(function (x) { return inWin(x, l); }))) unmatched.push(l);
+    var r = l.row;
+    if (r.amount < 0 && r.date >= win.from && r.date <= win.to) payFor(r.name, -r.amount, l.how === 'bill' || l.how === 'move');
   });
+  var onCards = S.Charges.filter(function (c) { return c.who === 'Bills' && counts(c); })
+    .concat((S.Pending || []).filter(function (p) { return p.who === 'Bills' && !p.hold; }));
+  onCards.forEach(function (c) { payFor(c.item, +c.amount, true); });
   var due = bills.filter(function (x) { return x.left > 0.004; });
-  return { bills: bills, due: due, dueAmt: r2(sum(due, function (x) { return x.left; })), unmatched: unmatched,
-           left: jointAcct() ? r2(jointAcct().balance - sum(due, function (x) { return x.left; })) : 0 };
+  var billsAmt = r2(sum(due, function (x) { return x.left; })), cardAmt = r2(sum(onCards, function (c) { return +c.amount; }));
+  var acct = jointAcct();
+  return { due: due, billsAmt: billsAmt, onCards: onCards, cardAmt: cardAmt, dueAmt: r2(billsAmt + cardAmt),
+           left: acct ? r2(acct.balance - billsAmt - cardAmt) : 0 };
 }
 function jointKindSelect(l) {
   var opts = (l.answered ? [] : [['', l.guess ? JOINT_KIND_LABEL[l.guess] + ' (guess)' : 'Not answered']])
@@ -1116,14 +1113,11 @@ function jointBankPanel(jm, jbl) {
     '<div class="num neg-out">− ' + money(jm.spend) + '</div><div class="fl-tools"><span class="sub2" style="margin:0">Since</span>' +
     '<input class="datein" style="width:auto;padding:4px 8px" type="date" data-t="Settings" data-id="jointSince" data-f="value" value="' + esc(jm.since) + '" title="Joint spending counts from this date. Clearing out-of-pocket moves it to that day."></div></div>';
   if (jbl) {
-    var paidBank = jbl.bills.filter(function (x) { return x.paidBy.length; });
-    h += '<div class="fline' + (jbl.unmatched.length ? ' needs' : '') + '"><div><b>Bills still to come out</b><div class="sub2">' +
-      (jbl.due.length ? jbl.due.map(function (x) { return esc(x.b.name) + ' ' + money(x.left) + (x.left < x.owed - 0.004 ? ' (rest)' : ''); }).join(' · ') : 'None. Every bill is paid.') +
-      '</div><div class="sub2">Our part. A bill stops counting once it’s green on Monthly Bills or its payment shows up here' +
-      (paidBank.length ? ' (' + paidBank.length + ' found: ' + paidBank.map(function (x) { return esc(x.b.name); }).join(', ') + ')' : '') +
-      ', so nothing counts twice. Food, Extra and other spending money stay in Left instead.</div>' +
-      (jbl.unmatched.length ? '<div class="q-hint">' + jbl.unmatched.map(function (l) { return '“' + esc(l.row.name) + '” ' + money(-l.row.amount); }).join(', ') +
-        (jbl.unmatched.length === 1 ? ' is' : ' are') + ' marked Monthly bill but doesn’t match a bill. Tick that bill green so it isn’t counted twice.</div>' : '') +
+    var cardNames = {}; jbl.onCards.forEach(function (c) { cardNames[c.item] = 1; });
+    h += '<div class="fline"><div><b>Bills still to come out</b><div class="sub2">' +
+      (jbl.due.length ? 'Not green yet: ' + jbl.due.map(function (x) { return esc(x.b.name) + ' ' + money(x.left) + (x.left < x.owed - 0.004 ? ' (rest)' : ''); }).join(' · ') : 'Every bill is green or paid.') +
+      (jbl.onCards.length ? '<br>On cards, labeled Bills: ' + money(jbl.cardAmt) + ' (' + Object.keys(cardNames).map(esc).join(', ') + '). That money leaves the joint when the cards are paid.' : '') +
+      '</div><div class="sub2">A bill paid straight from joint checking has already left the balance, so it isn’t counted again. Food, Extra and other spending money stay in Left.</div>' +
       '</div><div class="num neg-out">− ' + money(jbl.dueAmt) + '</div><div class="fl-tools"><span class="sub2" style="margin:0">After bills ' + money(jbl.left) + '</span></div></div>';
   }
   var nOut = jm.lines.filter(function (l) { return l.row.amount < 0 && l.counted; }).length;
