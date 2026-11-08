@@ -457,7 +457,7 @@
       <button data-act="nav" data-v="christmas">Christmas</button>
       <button data-act="nav" data-v="bank">Bank Sync</button>
     </nav>
-    <div class="search-wrap"><input id="q" type="search" placeholder="Search all cards" autocomplete="off" aria-label="Search all cards"></div>
+    <div class="search-wrap"><input id="q" type="search" placeholder="Search cards &amp; checking" autocomplete="off" aria-label="Search cards and checking"></div>
     <div class="top-right">
       <span id="status"></span>
       <button class="btn small" id="undoBtn" data-act="undo" disabled title="Nothing to undo">↶ Undo</button>
@@ -1306,7 +1306,7 @@ function viewSearch() {
   var ckHits = (S.Checking || []).concat(pastChecking || []).filter(function (r) { return matches({ item: r.name, amount: Math.abs(r.amount) }, q); });
   var past = (pastCharges || []).filter(function (x) { return matches(x, q); })
     .sort(function (a, b) { return String(b.clearedOn).localeCompare(String(a.clearedOn)); });
-  var h = '<h1>Search</h1><p class="sub">Searching every card for “' + esc(q) + '”. Type a store name or an amount like 85.39.</p>';
+  var h = '<h1>Search</h1><p class="sub">Searching every card, your checking and joint checking for “' + esc(q) + '”. Type a store name or an amount like 85.39.</p>';
   h += '<section class="panel" style="--c:#4C6EF5"><div class="found' + (now.length ? '' : ' none') + '">' +
     (now.length ? '✓ ' + now.length + ' match' + (now.length === 1 ? '' : 'es') + ' right now' : '✗ Not on any card or the joint right now') + '</div>';
   if (now.length) {
@@ -1326,6 +1326,19 @@ function viewSearch() {
       ckHits.slice(0, 100).map(function (r) {
         return '<div class="row g-res" data-act="nav" data-v="money"><div><div>' + hl(r.name, q) + '</div><div class="sub2">' + shortDate(r.date) + ' · M&amp;T checking' + (r.period ? ' · past pay period' : '') + '</div></div>' +
           '<div class="c-card2"><span class="cardtag" style="--c:#2B8A3E"><i></i>Checking</span></div><div class="c-who"></div>' +
+          '<div class="r num' + (r.amount > 0 ? ' pos-txt' : '') + '">' + (r.amount > 0 ? '+' : '−') + money(Math.abs(r.amount)) + '</div></div>';
+      }).join('') + '</div></section>';
+  }
+  // joint checking lines straight from the bank (the last ~45 days SimpleFIN sends), with the answer each one was given
+  var jHits = [];
+  try { if (jointAcct()) jHits = jointMath().lines.filter(function (l) { return matches({ item: xferName(l.row) || l.row.name, amount: Math.abs(l.row.amount) }, q) || matches({ item: l.row.name, amount: Math.abs(l.row.amount) }, q); }); } catch (e) { console.error(e); }
+  if (jHits.length) {
+    h += '<section class="panel" style="--c:#FAB005;margin-top:16px"><div class="found" style="color:#8F5B00">' + jHits.length + ' in joint checking</div><div class="rows">' +
+      jHits.slice(0, 100).map(function (l) {
+        var r = l.row, how = l.how ? JOINT_KIND_LABEL[l.how] + (l.answered ? '' : ' (guess)') : 'Not answered';
+        return '<div class="row g-res" data-act="nav" data-v="joint" title="Open the Joint page"><div><div>' + hl(xferName(r) || r.name, q) + (r.pending ? '<span class="pchip">pending</span>' : '') + '</div>' +
+          '<div class="sub2">' + shortDate(r.date) + ' · ' + esc(how) + (l.counted ? '' : ' · before the joint started over') + '</div></div>' +
+          '<div class="c-card2"><span class="cardtag" style="--c:#FAB005"><i></i>Joint checking</span></div><div class="c-who"></div>' +
           '<div class="r num' + (r.amount > 0 ? ' pos-txt' : '') + '">' + (r.amount > 0 ? '+' : '−') + money(Math.abs(r.amount)) + '</div></div>';
       }).join('') + '</div></section>';
   }

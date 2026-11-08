@@ -300,6 +300,11 @@ SCENARIOS.push({
         yes('Two lines need an answer', j.ask === 2, j.ask + ' need an answer'),
         money('Joint is short', 188.40, mm().jointShort), money('Your half', 94.20, mm().jointHalf),
         says('Joint page shows the bank balance', 'Joint checking at the bank', pageText('Joint')), pagesDraw()]; } },
+    { t: 'Search for "wegmans" and for 95', run: function () {},
+      check: function () {
+        A.query = 'wegmans'; var w = A.viewSearch(); A.query = '95'; var s = A.viewSearch(); A.query = '';
+        return [yes('Search finds Wegmans in joint checking', /1 in joint checking/.test(w) && /Wegmans/.test(w)),
+                yes('Search by amount finds the Spectrum line', /in joint checking/.test(s) && /Spectrum/.test(s))]; } },
     { t: 'Answer: Wegmans is joint spending, Aldi gets left out', run: function () { A.setJointKind('jb_weg', 'spend'); A.setJointKind('jb_aldi', 'ignore'); },
       check: function () { var j = A.calc().jointBank; return [
         money('Debit spending counted', 60, j.spend), yes('Nothing left to answer', j.ask === 0, j.ask + ' still need an answer'),
