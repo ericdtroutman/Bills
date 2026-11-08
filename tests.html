@@ -305,6 +305,22 @@ SCENARIOS.push({
         A.query = 'wegmans'; var w = A.viewSearch(); A.query = '95'; var s = A.viewSearch(); A.query = '';
         return [yes('Search finds Wegmans in joint checking', /1 in joint checking/.test(w) && /Wegmans/.test(w)),
                 yes('Search by amount finds the Spectrum line', /in joint checking/.test(s) && /Spectrum/.test(s))]; } },
+    { t: 'Joint after bills (on Oct 26): bank $3,000 minus bills not paid yet; Spectrum already left the bank, so it doesn\'t count twice', run: function () {},
+      check: function () {
+        var realToday = A.today; A.today = function () { return '2026-10-26'; };
+        try {
+          var b = A.jointBills(A.calc().jointBank);
+          var out = [money('Bills still to come out (both $2,812 bills; Spectrum paid at the bank)', 5624, b.dueAmt),
+                     money('Joint after bills', -2624, b.left)];
+          var u = A.find('Bills', 'b_15th'); u.status = 'paid';
+          out.push(money('Ticking Utilities green takes it out', 2812, A.jointBills(A.calc().jointBank).dueAmt)); u.status = '';
+          A.setJointKind('jb_weg', 'bill');
+          out.push(yes('Wegmans marked Monthly bill but matching no bill gets flagged', A.jointBills(A.calc().jointBank).unmatched.length === 1));
+          A.setJointKind('jb_weg', '');
+          out.push(says('Joint page shows Joint after bills', 'Joint after bills', pageText('Joint')));
+          return out;
+        } finally { A.today = realToday; }
+      } },
     { t: 'Answer: Wegmans is joint spending, Aldi gets left out', run: function () { A.setJointKind('jb_weg', 'spend'); A.setJointKind('jb_aldi', 'ignore'); },
       check: function () { var j = A.calc().jointBank; return [
         money('Debit spending counted', 60, j.spend), yes('Nothing left to answer', j.ask === 0, j.ask + ' still need an answer'),
