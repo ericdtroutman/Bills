@@ -490,6 +490,16 @@ SCENARIOS.push({
         yes('The 7 Brew is out of pending', !A.S.Pending.some(function (p) { return p.id === 'pd_a'; })),
         yes('Card check: bank credit matches the paid pending (no warning)', !A.cardCheck(A.find('Cards', 'c_chase')).warn, 'off ' + A.cardCheck(A.find('Cards', 'c_chase')).off),
         (function () { var was = A.selCard; A.selCard = 'c_chase'; var t = pageText('Cards'); A.selCard = was; return yes('Cards page shows it as paid while pending', t.indexOf('Paid while pending') >= 0); })(), pagesDraw()]; } },
+    { t: 'Pick just one: a second pending charge, mark only that one paid, then say it wasn\'t', run: function () {
+        A.S._pendingAll.push({ id: 'pd_c', cardId: 'c_chase', item: 'Crosbys', amount: 12, who: 'Arianna', date: '2026-11-07', bankId: 'bk_pc', hold: false });
+        A.S._pendingAll.push({ id: 'pd_d', cardId: 'c_chase', item: 'Wegmans', amount: 30, who: 'Arianna', date: '2026-11-07', bankId: 'bk_pd', hold: false });
+        A.settlePaidPending(); A.payPendingOff('c_chase', ['pd_c']); },
+      check: function () { var m = A.calc(), out = [
+        money('Only Crosbys was marked paid; Wegmans still counts', 30, m.arianna + m.pend.arianna),
+        yes('Wegmans still pending', A.S.Pending.some(function (p) { return p.id === 'pd_d'; }))];
+        A.unpayPending('bk_pc'); out.push(money('"Not paid" puts Crosbys back', 42, A.calc().arianna + A.calc().pend.arianna));
+        A.S._pendingAll = A.S._pendingAll.filter(function (p) { return p.id !== 'pd_c' && p.id !== 'pd_d'; }); A.settlePaidPending();
+        return out; } },
     { t: 'Next sync: the 7 Brew posts as a charge with a new id', run: function () {
         var data = JSON.parse(JSON.stringify(A.S)); delete data._pendingAll;
         data.Pending = data.Pending.filter(function (p) { return p.id !== 'pd_a'; });

@@ -130,6 +130,7 @@
   .row:first-child { border-top: 0; }
   .row:hover { background: #FBFBFD; }
   .g-charge { grid-template-columns: 26px 1fr 110px 108px 26px; }
+  .rows.pend .g-charge { grid-template-columns: 26px 1fr 110px 108px 58px; }
   .holdbox { width: 18px; height: 18px; border-radius: 5px; border: 2px solid #C3C8D2; background: #fff; padding: 0; display: grid; place-items: center; }
   .holdbox:hover { border-color: #868E96; }
   .holdbox.on { background: #868E96; border-color: #868E96; }
@@ -429,6 +430,9 @@
     main { padding: 16px 12px 80px; }
     .phead, .breakdown, .addrow, .hrow, .row, .pfoot { padding-left: 14px; padding-right: 14px; }
     .g-charge { grid-template-columns: 24px 1fr 92px 86px 24px; }
+    .rows.pend .g-charge { grid-template-columns: 22px 1fr 62px 76px 46px; gap: 6px; }
+    .rows.pend .g-charge .btn.small { padding: 5px 7px; font-size: 12px; }
+    .rows.pend .g-charge select.who { width: 100%; min-width: 0; padding: 5px 6px; text-overflow: ellipsis; }
     .g-bill { grid-template-columns: 16px 26px 1fr 80px 80px 26px 56px 20px; }
     .row.g-bill, .hrow.g-bill { padding-left: 6px; }
     .login { margin-left: 14px; margin-right: 14px; grid-template-columns: 1fr; gap: 4px; }
@@ -993,20 +997,21 @@ function viewCards(m) {
     h += '<div class="pend-head"><b>Pending at the bank · ' + money(sum(pend, function (x) { return x.hold ? 0 : x.amount; })) +
       (pendHeld.length ? ' · ' + money(sum(pendHeld, function (x) { return x.amount; })) + ' on hold' : '') + '</b>' +
       '<span>Counted in the card total unless on hold. Label them to see who owes what. When one posts it moves up into the charges.</span>' +
-      (pend.some(function (x) { return !x.hold; }) ? '<button class="btn small" style="margin-top:6px" data-act="pendpaid" data-id="' + esc(card.id) + '">Already paid these (not on hold)</button>' : '') +
       '</div><div class="rows pend">';
     pend.forEach(function (x) {
       h += '<div class="row g-charge' + (x.hold ? ' held' : '') + '" data-charge="' + esc(x.id) + '"><button class="holdbox' + (x.hold ? ' on' : '') + '" data-act="hold" data-t="Pending" data-id="' + esc(x.id) + '" title="' +
         (x.hold ? 'On hold. Click to count it again' : 'Put on hold (counts toward the next pay period)') + '"></button><div><div class="item" style="padding:7px 0">' + esc(x.item) + '<span class="pchip">pending</span>' + (x.hold ? ' <span class="hchip">on hold</span>' : '') + '</div>' +
         (x.date ? '<div class="sub2">' + shortDate(x.date) + '</div>' : '') + '</div>' +
-        '<div class="r num' + (x.amount < 0 ? ' neg-txt' : '') + '">' + money(x.amount) + '</div>' + whoSelect(x, 'Pending') + '<div></div></div>';
+        '<div class="r num' + (x.amount < 0 ? ' neg-txt' : '') + '">' + money(x.amount) + '</div>' + whoSelect(x, 'Pending') +
+        '<div style="text-align:right">' + (x.hold ? '' : '<button class="btn small" style="white-space:nowrap" data-act="pendpaid" data-id="' + esc(x.id) + '" title="Already paid with the last card payment">Paid</button>') + '</div></div>';
     });
     h += '</div>';
   }
   var paidP = paidPendingShown.filter(function (e) { return e.cardId === card.id; });
   if (paidP.length) {
     h += '<div class="pend-head"><b>Paid while pending · ' + money(sum(paidP, function (e) { return e.amount; })) + '</b><span>Already paid with the card. Not counted for anyone; when they post they’re filed away on their own.</span></div><div class="rows pend">' +
-      paidP.map(function (e) { return '<div class="row g-ro" style="opacity:.6"><div>' + esc(e.item) + ' <span class="pchip">paid</span><div class="sub2">' + (e.date ? shortDate(e.date) + ' · ' : '') + esc(e.who || 'no label') + '</div></div><div class="r num">' + money(e.amount) + '</div></div>'; }).join('') + '</div>';
+      paidP.map(function (e) { return '<div class="row g-ro"><div style="opacity:.6">' + esc(e.item) + ' <span class="pchip">paid</span><div class="sub2">' + (e.date ? shortDate(e.date) + ' · ' : '') + esc(e.who || 'no label') + '</div></div>' +
+        '<div class="r" style="display:flex;gap:8px;align-items:center;justify-content:flex-end"><span class="num" style="opacity:.6">' + money(e.amount) + '</span><button class="btn small" style="white-space:nowrap" data-act="pendunpaid" data-id="' + esc(e.bankId) + '" title="Not paid yet: count it again">Not paid</button></div></div>'; }).join('') + '</div>';
   }
   var refundOf = {};     // refund id -> the return it may belong to
   if (retItems.length) {
@@ -1083,13 +1088,17 @@ function markPaySeen(cardId) { var s = jsonSetting('cardPaySeen'); s[cardId] = t
    charge never shows up is dropped after 21 days. */
 var paidPendingShown = [];
 function paidPendingList() { try { var v = JSON.parse(setting('paidPending', '') || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
-function payPendingOff(cardId) {
+function payPendingOff(cardId, onlyIds) {
   var list = paidPendingList(), have = {}; list.forEach(function (e) { have[e.bankId] = 1; });
-  var pp = (S.Pending || []).filter(function (x) { return x.cardId === cardId && !x.hold && !have[x.bankId]; });
+  var pp = (S.Pending || []).filter(function (x) { return x.cardId === cardId && !x.hold && !have[x.bankId] && (!onlyIds || onlyIds.indexOf(x.id) >= 0); });
   pp.forEach(function (x) { list.push({ bankId: x.bankId, cardId: cardId, item: x.item, amount: +x.amount, who: x.who || '', date: x.date || '', on: today(), posted: '' }); });
   if (pp.length) setSetting('paidPending', JSON.stringify(list));
   settlePaidPending();
   return pp.length;
+}
+function unpayPending(bankId) {
+  var list = paidPendingList().filter(function (e) { return !(e.bankId === bankId && !e.posted); });
+  setSetting('paidPending', JSON.stringify(list)); settlePaidPending();
 }
 function settlePaidPending() {
   if (!S._pendingAll) S._pendingAll = (S.Pending || []).slice();   // what the bank sent; S.Pending is this minus the paid ones
@@ -2887,13 +2896,11 @@ document.addEventListener('click', function (e) {
     };
   }
   else if (a === 'pendpaid') {
-    var pcard = find('Cards', id), pl = (S.Pending || []).filter(function (x) { return x.cardId === id && !x.hold; });
-    confirmBox('Already paid?', 'This marks ' + pl.length + ' pending charge' + (pl.length === 1 ? '' : 's') + ' on ' + esc(pcard.name) + ' (' + money(sum(pl, function (x) { return x.amount; })) +
-      ') as paid with your last card payment. They stop counting for anyone and are filed away when they post. Charges on hold aren’t touched.', 'Mark paid', function () {
-      undoLabel = 'marking pending as paid'; var n = payPendingOff(id); render();
-      toast(n + ' pending charge' + (n === 1 ? '' : 's') + ' marked paid <button class="toast-btn" data-act="undo">Undo</button>', 8000);
-    });
+    var px = (S.Pending || []).filter(function (x) { return x.id === id; })[0]; if (!px) return;
+    undoLabel = 'marking “' + px.item + '” paid'; payPendingOff(px.cardId, [id]); render();
+    toast('“' + esc(px.item) + '” ' + money(px.amount) + ' marked paid <button class="toast-btn" data-act="undo">Undo</button>', 8000);
   }
+  else if (a === 'pendunpaid') { undoLabel = 'unmarking a paid pending charge'; unpayPending(id); render(); }
   else if (a === 'hold') {
     var ht = b.dataset.t || 'Charges', hc = find(ht, id);
     undoLabel = (hc.hold ? 'taking “' : 'putting “') + hc.item + (hc.hold ? '” off hold' : '” on hold');
