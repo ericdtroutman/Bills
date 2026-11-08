@@ -1134,6 +1134,16 @@ var CARD_CHECK_LIMIT = 30;
 function cardCheck(card) {
   var acct = (S.BankAccounts || []).filter(function (a) { return a.cardId === card.id; })[0];
   if (!acct || card.paid || payWaiting(card)) return null;
+  // just cleared: the bank still has those charges until the payment comes through, so wait for it (Eric, Nov 8, 2026).
+  // When it shows on the card's feed, check it was the amount that was cleared (within $1).
+  var cl = jsonSetting('cardCleared')[card.id];
+  if (cl && cl.on) {
+    var pay = jsonSetting('cardPays')[card.id];
+    var seen = pay && pay.date && pay.date >= addDays(cl.on, -3);
+    if (!seen && dayGap(cl.on, today()) <= 10) return { card: card, waiting: true, expect: +cl.amount || 0, warn: false };
+    if (seen && Math.abs(Math.abs(+pay.amount) - (+cl.amount || 0)) > 1.005 && dayGap(cl.on, today()) <= 21)
+      return { card: card, payWrong: true, paid: Math.abs(+pay.amount), expect: +cl.amount || 0, on: pay.date, warn: true };
+  }
   var bank = r2(-(+acct.balance || 0));
   var app = r2(sum(S.Charges.filter(function (c) { return c.cardId === card.id; }), function (c) { return c.amount; }) -
     sum(paidPendingShown.filter(function (e) { return e.cardId === card.id; }), function (e) { return e.amount; }));   // paid while pending: a credit at the bank until they post
@@ -1143,6 +1153,9 @@ function cardCheck(card) {
 function cardCheckNudge(cards) {
   return cards.map(function (c) {
     var k = cardCheck(c);
+    if (k && k.waiting) return '<div class="notice nudge"><span><b>' + esc(c.name) + ':</b> cleared. Waiting for the ' + money(k.expect) + ' payment to show up at the bank; the balance check starts again after that.</span></div>';
+    if (k && k.payWrong) return '<div class="notice bad" style="margin:0 0 14px;font-weight:500"><span><b>' + esc(c.name) + ' payment doesn’t match:</b> ' + money(k.paid) + ' was paid on ' + shortDate(k.on) +
+      ', but the charges you cleared (plus pending ones it covered) came to ' + money(k.expect) + '. ' + money(Math.abs(k.paid - k.expect)) + (k.paid < k.expect ? ' short.' : ' over.') + '</span></div>';
     if (!k || !k.warn) return '';
     return '<div class="notice bad" style="margin:0 0 14px;font-weight:500"><span><b>' + esc(c.name) + ' doesn’t add up:</b> the bank says ' + money(k.bank) + ' is owed, but the charges here add up to ' +
       money(k.app) + ' (' + money(Math.abs(k.off)) + (k.off > 0 ? ' more at the bank' : ' less at the bank') + '). ' +
@@ -2942,6 +2955,8 @@ document.addEventListener('click', function (e) {
       });
       // save a copy of each charge to History first, so search can still find it after the card is cleared
       keepRows.forEach(function (r) { upsert('History', r); });
+      var clearedAmt = r2(sum(toClear, function (x) { return x.amount; }) + sum((S.Pending || []).filter(function (x) { return x.cardId === id && !x.hold; }), function (x) { return x.amount; }));
+      var cc2 = jsonSetting('cardCleared'); cc2[id] = { on: day, amount: clearedAmt }; setSetting('cardCleared', JSON.stringify(cc2));
       removeIds('Charges', toClear.map(function (x) { return x.id; })); payPendingOff(id); upsert('Cards', { id: id, paid: false }); markPaySeen(id); render();
       toast(esc(cc.name) + ' cleared <button class="toast-btn" data-act="undo">Undo</button>', 8000);
     });

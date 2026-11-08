@@ -459,6 +459,23 @@ SCENARIOS.push({
         says('Cards page warns', 'Amex doesn’t add up', pageText('Cards'))]; } },
     { t: 'Only $20 off (interest-size): no warning', run: function () { A.S.BankAccounts.filter(function (a) { return a.id === 'amex|1'; })[0].balance = -1668.40; },
       check: function () { return [yes('No warning under $30', !A.cardCheck(A.find('Cards', 'c_amex')).warn)]; } },
+    { t: 'Clear Amex after paying: no warning while the payment is on its way', run: function () {
+        A.S.BankAccounts.filter(function (a) { return a.id === 'amex|1'; })[0].balance = -1648.40;
+        var btn = A.document.createElement('button'); btn.dataset.act = 'clearcard'; btn.dataset.id = 'c_amex'; A.document.body.appendChild(btn); btn.click();
+        A.document.querySelector('#modal [data-m="yes"]').click(); },
+      check: function () { var k = A.cardCheck(A.find('Cards', 'c_amex')); return [
+        yes('Waiting, no warning (bank still shows the old balance)', k && k.waiting && !k.warn),
+        money('Expects the payment for what was cleared ($1,608.40 + the $25 pending)', 1633.40, k ? k.expect : 0),
+        says('Cards page says it is waiting', 'Waiting for the $1,633.40 payment', pageText('Cards'))]; } },
+    { t: 'The payment shows up, but only $1,600', run: function () {
+        A.setSetting('cardPays', JSON.stringify({ c_amex: { date: A.today(), amount: 1600 } })); },
+      check: function () { var k = A.cardCheck(A.find('Cards', 'c_amex')); return [
+        yes('Warns the payment is short', k && k.payWrong && k.warn), says('Cards page says so', 'payment doesn’t match', pageText('Cards'))]; } },
+    { t: 'The right amount was paid and the bank balance dropped', run: function () {
+        A.setSetting('cardPays', JSON.stringify({ c_amex: { date: A.today(), amount: 1633.40 } }));
+        A.S.BankAccounts.filter(function (a) { return a.id === 'amex|1'; })[0].balance = -15; },   // $40 Kohls on hold − the $25 Tops it paid while pending
+      check: function () { var k = A.cardCheck(A.find('Cards', 'c_amex')); return [
+        yes('Back to the normal check, and it adds up ($40 Kohls on hold, less the $25 Tops credit)', k && !k.waiting && !k.payWrong && !k.warn, JSON.stringify(k && { off: k.off }))]; } },
     { t: 'Card marked Paid: the check waits until it is cleared', run: function () { A.find('Cards', 'c_amex').paid = true; A.S.BankAccounts.filter(function (a) { return a.id === 'amex|1'; })[0].balance = 0; },
       check: function () { return [yes('Skipped while marked Paid', A.cardCheck(A.find('Cards', 'c_amex')) === null), pagesDraw()]; } }
   ]
