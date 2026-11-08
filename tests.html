@@ -409,6 +409,61 @@ SCENARIOS.push({
   ]
 });
 
+// Arianna's summary PDF (Nov 8, 2026): her own charges + half of Split, posted and pending, matching "Arianna owes with pending"
+SCENARIOS.push({
+  title: 'Arianna\'s summary adds up to what she owes',
+  about: 'Her own charges plus half of every Split charge, posted and pending. On-hold and returning charges are left out. 7 Brew trips are added up together.',
+  needs: 'ariannaReport',
+  data: (function () {
+    var d = startingData();
+    d.Charges.push({ id: 'a1', cardId: 'c_chase', item: '7 Brew Coffee', amount: 8.59, who: 'Arianna', order: 10, date: '2026-10-28', hold: false, settled: '' },
+                   { id: 'a2', cardId: 'c_chase', item: '7 Brew Coffee', amount: 8.59, who: 'Arianna', order: 11, date: '2026-10-29', hold: false, settled: '' },
+                   { id: 'a3', cardId: 'c_chase', item: 'HomeGoods', amount: 27.18, who: 'Arianna', order: 12, date: '2026-11-01', hold: false, settled: '' },
+                   { id: 'a4', cardId: 'c_chase', item: 'Kohls', amount: 40, who: 'Arianna', order: 13, date: '2026-11-02', hold: true, settled: '' },
+                   { id: 'a5', cardId: 'c_chase', item: 'Lamp', amount: 30, who: 'Arianna', order: 14, date: '2026-11-02', hold: false, settled: '', ret: '2026-11-03' });
+    d.Pending = [{ id: 'p1', cardId: 'c_chase', item: '7 Brew Coffee', amount: 8.59, who: 'Arianna', date: '2026-11-06', hold: false },
+                 { id: 'p2', cardId: 'c_chase', item: 'Crosbys', amount: 45.52, who: 'Split', date: '2026-11-06', hold: false },
+                 { id: 'p3', cardId: 'c_chase', item: 'Target', amount: 60, who: 'Arianna', date: '2026-11-07', hold: true }];
+    return d;
+  })(),
+  steps: [
+    { t: 'Build her summary', run: function () {},
+      check: function () { var R = A.ariannaReport(), m = A.calc(), brew = R.top.filter(function (p) { return /7 Brew/.test(p.name); })[0] || {};
+        return [money('Her total (8.59 + 8.59 + 27.18 + 8.59 pending + half of 241.60 Costco + half of 45.52 Crosbys)', 196.51, R.total),
+                money('Matches "Arianna owes" with pending', m.arianna + m.pend.arianna, R.total),
+                money('Her half of Split', 143.56, R.split),
+                money('7 Brew added up (3 trips)', 25.77, brew.total), yes('7 Brew counted as 3 charges', brew.n === 3, 'n = ' + brew.n),
+                yes('On-hold and returning charges left out', !R.rows.some(function (r) { return /Kohls|Lamp|Target/.test(r.item); })),
+                money('Pie adds up to the total', 196.51, R.pie.reduce(function (a, x) { return a + x.total; }, 0))]; } }
+  ]
+});
+
+// Card check (Nov 8, 2026): the bank's balance for a card should match the charges the app has on it, within $30
+SCENARIOS.push({
+  title: 'Each card adds up to what the bank says',
+  about: 'Amex is linked to the bank. Its balance should equal every posted charge on it here (on hold and being returned included, pending not). More than $30 off shows a warning.',
+  needs: 'cardCheck',
+  data: (function () {
+    var d = startingData();   // Amex has Target $500 + National Fuel $1,108.40 = $1,608.40
+    d.Charges.push({ id: 'k_hold', cardId: 'c_amex', item: 'Kohls', amount: 40, who: 'Arianna', order: 20, date: '2026-11-02', hold: true, settled: '' });
+    d.Pending = [{ id: 'k_p', cardId: 'c_amex', item: 'Tops', amount: 25, who: 'Joint', date: '2026-11-07', hold: false }];
+    d.BankAccounts.push({ id: 'amex|1', name: 'Blue Cash (4005)', bank: 'American Express', cardId: 'c_amex', balance: -1648.40 });
+    return d;
+  })(),
+  steps: [
+    { t: 'Bank $1,648.40 = $1,608.40 + the $40 on hold (pending isn\'t on the bank balance)', run: function () {},
+      check: function () { var k = A.cardCheck(A.find('Cards', 'c_amex')); return [money('Off by', 0, k.off), yes('No warning', !k.warn),
+        yes('Cards page has no warning', pageText('Cards').indexOf('doesn’t add up') < 0)]; } },
+    { t: 'A $45 charge is at the bank but not here', run: function () { A.S.BankAccounts.filter(function (a) { return a.id === 'amex|1'; })[0].balance = -1693.40; },
+      check: function () { var k = A.cardCheck(A.find('Cards', 'c_amex')); return [money('Off by', 45, k.off), yes('Warning shows', k.warn),
+        says('Cards page warns', 'Amex doesn’t add up', pageText('Cards'))]; } },
+    { t: 'Only $20 off (interest-size): no warning', run: function () { A.S.BankAccounts.filter(function (a) { return a.id === 'amex|1'; })[0].balance = -1668.40; },
+      check: function () { return [yes('No warning under $30', !A.cardCheck(A.find('Cards', 'c_amex')).warn)]; } },
+    { t: 'Card marked Paid: the check waits until it is cleared', run: function () { A.find('Cards', 'c_amex').paid = true; A.S.BankAccounts.filter(function (a) { return a.id === 'amex|1'; })[0].balance = 0; },
+      check: function () { return [yes('Skipped while marked Paid', A.cardCheck(A.find('Cards', 'c_amex')) === null), pagesDraw()]; } }
+  ]
+});
+
 // Nov 8, 2026: Eric's real joint on the day Left said $2.85 but the bank said the joint was $79.76 short
 SCENARIOS.push({
   title: 'Left from the bank (Nov 8 numbers)',

@@ -775,6 +775,142 @@ function copyText(text) {
   } else fallback();
 }
 
+/* ======================================================================= Arianna's pay-period summary (Eric, Nov 8, 2026)
+   One tap on the Cards page makes a PDF of what Arianna's share of the cards is made of: her own charges plus her half of
+   Split, posted and pending (not on hold, not being returned), so the total matches "Arianna owes, with pending". It shows
+   a pie by kind of spending, her top places added up (all the 7 Brew trips together), and every charge. The phone's share
+   sheet opens so it can go straight to her in Messages; without one, the file downloads. */
+function ariannaReport() {
+  var rows = [];
+  var add = function (c, pending) {
+    var full = +c.amount || 0, mine = c.who === 'Split' ? full / 2 : full;
+    var card = find('Cards', c.cardId);
+    rows.push({ date: c.date || '', item: String(c.item || ''), card: card ? card.name : '', full: full, mine: r2(mine), split: c.who === 'Split', pending: pending });
+  };
+  S.Charges.filter(function (c) { return counts(c) && (c.who === 'Arianna' || c.who === 'Split'); }).forEach(function (c) { add(c, false); });
+  (S.Pending || []).filter(function (p) { return !p.hold && (p.who === 'Arianna' || p.who === 'Split'); }).forEach(function (p) { add(p, true); });
+  rows.sort(function (a, b) { return String(a.date).localeCompare(String(b.date)) || a.item.localeCompare(b.item); });
+  var total = r2(sum(rows, function (r) { return r.mine; }));
+  var own = r2(sum(rows.filter(function (r) { return !r.split; }), function (r) { return r.mine; }));
+  var places = {}, kinds = {};
+  rows.forEach(function (r) {
+    var k = storeKey(r.item);
+    if (!places[k]) places[k] = { names: {}, n: 0, total: 0 };
+    places[k].names[r.item] = (places[k].names[r.item] || 0) + 1; places[k].n++; places[k].total += r.mine;
+    var t = typeOf(r.item); kinds[t] = (kinds[t] || 0) + r.mine;
+  });
+  var top = Object.keys(places).map(function (k) {
+    var p = places[k], name = Object.keys(p.names).sort(function (a, b) { return p.names[b] - p.names[a]; })[0];
+    return { name: name, n: p.n, total: r2(p.total) };
+  }).sort(function (a, b) { return b.total - a.total; });
+  var pie = Object.keys(kinds).map(function (k) { return { name: k, total: r2(kinds[k]) }; }).filter(function (x) { return x.total > 0.004; })
+    .sort(function (a, b) { return b.total - a.total; });
+  var dated = rows.filter(function (r) { return r.date; });
+  return { rows: rows, total: total, own: own, split: r2(total - own), pending: r2(sum(rows.filter(function (r) { return r.pending; }), function (r) { return r.mine; })),
+           top: top, pie: pie, from: dated.length ? dated[0].date : '', to: dated.length ? dated[dated.length - 1].date : '' };
+}
+var JSPDF_URL = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+function loadJsPdf() {
+  if (window.jspdf) return Promise.resolve(window.jspdf.jsPDF);
+  return new Promise(function (ok, bad) {
+    var sc = document.createElement('script'); sc.src = JSPDF_URL;
+    sc.onload = function () { window.jspdf ? ok(window.jspdf.jsPDF) : bad(new Error('PDF maker didn’t load')); };
+    sc.onerror = function () { bad(new Error('Couldn’t load the PDF maker. Check the connection and try again.')); };
+    document.head.appendChild(sc);
+  });
+}
+function pdfText(t) { return String(t || '').replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—−]/g, '-').replace(/[^\x20-\x7E\xA0-\xFF]/g, ''); }
+function longDate(d) { if (!d) return ''; var x = new Date(d + 'T12:00:00'); return x.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
+var PIE_COLORS = ['#E64980', '#4C6EF5', '#37B24D', '#F76707', '#845EF7', '#1098AD', '#FAB005', '#ADB5BD'];
+function pieImage(slices) {
+  var c = document.createElement('canvas'); c.width = c.height = 600;
+  var g = c.getContext('2d'), tot = sum(slices, function (s) { return s.total; }), a = -Math.PI / 2;
+  slices.forEach(function (s) {
+    var da = tot ? s.total / tot * Math.PI * 2 : 0;
+    g.beginPath(); g.moveTo(300, 300); g.arc(300, 300, 290, a, a + da); g.closePath(); g.fillStyle = s.color; g.fill();
+    g.lineWidth = 6; g.strokeStyle = '#FFFFFF'; g.stroke(); a += da;
+  });
+  g.beginPath(); g.arc(300, 300, 150, 0, Math.PI * 2); g.fillStyle = '#FFFFFF'; g.fill();
+  return c.toDataURL('image/png');
+}
+function ariannaPdf() {
+  var R = ariannaReport();
+  if (!R.rows.length) { toast('Arianna has no charges right now.'); return; }
+  toast('Making Arianna’s summary…');
+  loadJsPdf().then(function (JsPDF) {
+    var doc = new JsPDF({ unit: 'pt', format: 'letter' }), W = 612, M = 44, y = 56;
+    var ink = [33, 37, 41], muted = [134, 142, 150], line = [222, 226, 230], accent = [230, 73, 128];
+    var setC = function (c) { doc.setTextColor(c[0], c[1], c[2]); };
+    var room = function (need) { if (y + need > 748) { doc.addPage(); y = 56; } };
+    // heading
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(22); setC(ink); doc.text('Arianna\'s spending', M, y);
+    y += 20; doc.setFont('helvetica', 'normal'); doc.setFontSize(11); setC(muted);
+    doc.text(pdfText('This pay period' + (R.from ? ': ' + longDate(R.from) + ' to ' + longDate(R.to) : '') + ' · made ' + longDate(today())), M, y);
+    // total box
+    y += 22; doc.setFillColor(252, 237, 243); doc.roundedRect(M, y, W - 2 * M, 64, 8, 8, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(12); setC(accent); doc.text('Her share of the cards', M + 16, y + 22);
+    doc.setFontSize(26); setC(ink); doc.text(money(R.total), W - M - 16, y + 30, { align: 'right' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5); setC(muted);
+    doc.text(pdfText('Her own charges ' + money(R.own) + ' + her half of shared (Split) charges ' + money(R.split) + (R.pending ? ' · includes ' + money(R.pending) + ' still pending' : '')), M + 16, y + 48);
+    y += 92;
+    // pie + legend
+    var slices = R.pie.map(function (s, i) { return { name: s.name, total: s.total, color: TYPE_COLOR[s.name] || PIE_COLORS[i % PIE_COLORS.length] }; });
+    var ptot = sum(slices, function (s) { return s.total; });
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(14); setC(ink); doc.text('What kind of spending', M, y); y += 12;
+    doc.addImage(pieImage(slices), 'PNG', M, y, 170, 170);
+    var ly = y + 22;
+    slices.forEach(function (s) {
+      var rgb = [parseInt(s.color.slice(1, 3), 16), parseInt(s.color.slice(3, 5), 16), parseInt(s.color.slice(5, 7), 16)];
+      doc.setFillColor(rgb[0], rgb[1], rgb[2]); doc.roundedRect(M + 196, ly - 9, 11, 11, 2, 2, 'F');
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(12); setC(ink); doc.text(pdfText(s.name), M + 214, ly);
+      doc.setFont('helvetica', 'bold'); doc.text(money(s.total), W - M - 52, ly, { align: 'right' });
+      doc.setFont('helvetica', 'normal'); setC(muted); doc.text(Math.round(ptot ? s.total / ptot * 100 : 0) + '%', W - M, ly, { align: 'right' });
+      ly += 24;
+    });
+    y += 192;
+    // top places
+    room(60);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(14); setC(ink); doc.text('Where it went most (each place added up)', M, y); y += 8;
+    R.top.slice(0, 8).forEach(function (p, i) {
+      room(24); y += 22;
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(12); setC(ink); doc.text((i + 1) + '.  ' + pdfText(p.name), M, y);
+      doc.setFont('helvetica', 'normal'); setC(muted); doc.text(p.n + (p.n === 1 ? ' charge' : ' charges'), W - M - 110, y, { align: 'right' });
+      doc.setFont('helvetica', 'bold'); setC(ink); doc.text(money(p.total), W - M, y, { align: 'right' });
+      doc.setDrawColor(line[0], line[1], line[2]); doc.line(M, y + 8, W - M, y + 8);
+    });
+    // every charge
+    y += 34; room(60);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(14); setC(ink); doc.text('Every charge', M, y); y += 18;
+    doc.setFontSize(9.5); setC(muted); doc.text('DATE', M, y); doc.text('PLACE', M + 62, y); doc.text('CARD', M + 300, y); doc.text('HERS', W - M, y, { align: 'right' }); y += 6;
+    R.rows.forEach(function (r) {
+      room(30); y += 18;
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(11); setC(ink);
+      doc.text(r.date ? shortDate(r.date) : '', M, y);
+      var name = pdfText(r.item); if (name.length > 38) name = name.slice(0, 37) + '...';
+      doc.text(name, M + 62, y);
+      doc.setFontSize(10); setC(muted); doc.text(pdfText(r.card), M + 300, y);
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(11); setC(ink); doc.text(money(r.mine), W - M, y, { align: 'right' });
+      var note = (r.split ? 'Shared: half of ' + money(r.full) : '') + (r.pending ? (r.split ? ' · ' : '') + 'pending' : '');
+      if (note) { y += 13; doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); setC(muted); doc.text(pdfText(note), M + 62, y); }
+      doc.setDrawColor(line[0], line[1], line[2]); doc.line(M, y + 7, W - M, y + 7);
+    });
+    room(40); y += 30;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(12); setC(ink); doc.text('Total', M, y); doc.text(money(R.total), W - M, y, { align: 'right' });
+    y += 20; doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); setC(muted);
+    doc.text('Charges on hold for next pay period and returns waiting for a refund are not included.', M, y);
+    var fname = 'Arianna spending ' + (R.to ? longDate(R.to) : longDate(today())).replace(/,/g, '') + '.pdf';
+    var blob = doc.output('blob'), file = null;
+    try { file = new File([blob], fname, { type: 'application/pdf' }); } catch (e) {}
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file], title: 'Arianna’s spending', text: 'Your card spending this pay period: ' + money(R.total) }).catch(function () {});
+    } else {
+      var url = URL.createObjectURL(blob), a = document.createElement('a');
+      a.href = url; a.download = fname; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+    }
+  }, function (e) { toast(e.message || 'Couldn’t make the PDF.'); });
+}
+
 /* ======================================================================= views */
 function viewCards(m) {
   var cards = S.Cards.slice().sort(byOrder);
@@ -791,8 +927,10 @@ function viewCards(m) {
       m.returning.length ? money(sum(m.returning, function (x) { return x.amount; })) + ' being returned, not counted' :
       (m.pend.n ? 'Includes ' + money(m.pend.all) + ' pending' : 'Every charge has a person')), warn: !!m.needN }) +
     '</div>';
+  h += '<div style="margin:-4px 0 14px"><button class="btn small" data-act="ariannapdf" title="A PDF of her charges and her half of Split, ready to send her">Send Arianna her summary (PDF)</button></div>';
 
   h += payNudge(cards);
+  h += cardCheckNudge(cards);
   h += sinceNudge(m);
   h += '<div class="pills">';
   cards.forEach(function (c) {
@@ -930,6 +1068,28 @@ function payWaiting(card) {
   return p;
 }
 function markPaySeen(cardId) { var s = jsonSetting('cardPaySeen'); s[cardId] = today(); setSetting('cardPaySeen', JSON.stringify(s)); }
+/* ---- does each card add up? (Eric, Nov 8, 2026) The bank's balance for a linked card should equal every posted charge the
+   app still has on that card, on hold and being returned included (they're still on the bank's balance; pending charges
+   aren't). More than $30 apart means something was missed: a deleted or missing charge, a refund, interest or a fee.
+   Skipped while a card is marked Paid or a payment just went through (the balance has already dropped). */
+var CARD_CHECK_LIMIT = 30;
+function cardCheck(card) {
+  var acct = (S.BankAccounts || []).filter(function (a) { return a.cardId === card.id; })[0];
+  if (!acct || card.paid || payWaiting(card)) return null;
+  var bank = r2(-(+acct.balance || 0));
+  var app = r2(sum(S.Charges.filter(function (c) { return c.cardId === card.id; }), function (c) { return c.amount; }));
+  var off = r2(bank - app);
+  return { card: card, bank: bank, app: app, off: off, warn: Math.abs(off) > CARD_CHECK_LIMIT };
+}
+function cardCheckNudge(cards) {
+  return cards.map(function (c) {
+    var k = cardCheck(c);
+    if (!k || !k.warn) return '';
+    return '<div class="notice bad" style="margin:0 0 14px;font-weight:500"><span><b>' + esc(c.name) + ' doesn’t add up:</b> the bank says ' + money(k.bank) + ' is owed, but the charges here add up to ' +
+      money(k.app) + ' (' + money(Math.abs(k.off)) + (k.off > 0 ? ' more at the bank' : ' less at the bank') + '). ' +
+      (k.off > 0 ? 'A charge may be missing or deleted here, or there’s interest or a fee.' : 'A refund or payment may have come in, or a charge here is extra.') + '</span></div>';
+  }).join('');
+}
 function payNudge(cards) {
   return cards.map(function (c) {
     var p = payWaiting(c);
@@ -2625,6 +2785,7 @@ document.addEventListener('click', function (e) {
     setSetting('fundsLogged', mmL.cut || today()); render();
   }
   else if (a === 'jkset') { setJointKind(id, b.dataset.k); }
+  else if (a === 'ariannapdf') ariannaPdf();
   else if (a === 'jointtoggle') { jointOpen = !jointOpen; store('jointOpen', jointOpen ? '1' : '0'); render(); }
   else if (a === 'clearcash') {
     var cl = (S.JointCash || []).slice();
