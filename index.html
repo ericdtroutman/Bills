@@ -309,6 +309,13 @@
   .mm-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
   .mm-head .btn { white-space: nowrap; flex-shrink: 0; }
   .mm-pots .fline { grid-template-columns: 1fr 104px; }
+  .jpot .fline { grid-template-columns: 1fr 120px; }
+  .jhero { padding: 18px 20px; margin-bottom: 16px; border-left: 6px solid var(--good); }
+  .jhero.short { border-left-color: var(--bad); }
+  .jhero .jh-val { font-size: 40px; font-weight: 800; letter-spacing: -1px; margin: 2px 0 4px; }
+  .jhero .jh-val.neg { color: var(--bad); }
+  .jhero .jh-sub { font-size: 13px; color: var(--muted); }
+  .jhero .jh-short { margin-top: 8px; font-weight: 700; color: var(--bad); }
   .mm-pots .fl-tools { grid-column: 1 / -1; justify-content: flex-start; }
   .step.info .stepdot { border-style: dashed; font-style: italic; }
   .step.info > div { color: var(--ink2); font-size: 13px; }
@@ -677,7 +684,7 @@ function calc() {
   WHO.forEach(function (w) { tag[w] = sum(live.filter(function (c) { return c.who === w; }), function (c) { return c.amount; }); });
   var onCards = sum(live, function (c) { return c.amount; });
   var tagged = sum(WHO, function (w) { return tag[w]; });
-  var inJoint = sum(S.Joint, function (j) { return j.amount; });
+  var pot = jointPot(), inJoint = pot.total;
   var b1 = S.Bills.filter(function (b) { return b.payOn === '1st'; });
   var b15 = S.Bills.filter(function (b) { return b.payOn === '15th'; });
   var us1 = sum(b1, function (b) { return b.us; }), us15 = sum(b15, function (b) { return b.us; });
@@ -685,25 +692,14 @@ function calc() {
   var jb = { spend: 0, ask: 0, lines: [] };
   try { if (jointAcct()) jb = jointMath(); } catch (e) { console.error(e); }
   var cash = sum(S.JointCash || [], function (j) { return j.amount; });
-  var jointLeft = inJoint - tag.Joint - tag[EJ] / 2 - cash - jb.spend, bankJoint = null;
-  /* With joint checking linked, Left comes from the bank (Eric, Nov 8, 2026), so it can't drift from what's really there:
-     joint checking balance − joint checking lines still pending − bill money still in it (jointBills) − joint charges on
-     cards not marked paid yet − out-of-pocket owed back. Debit spending has already left the balance, so it isn't taken out
-     again. Eric's and Arianna's card shares aren't counted: they come into the joint and go straight back out with the card
-     payment. Cards marked Paid have already been paid, so their charges no longer count. */
+  /* Left = spending money for this pay period − what's been spent from it (Eric, Nov 10, 2026: "the simple way").
+     Spending money = Food + Extra from Monthly Bills for this check, plus anything typed in (e.g. Dance) — see jointPot().
+     Spent = joint charges on the cards (+ half of Eric + Joint) + debit spending from joint checking + out of pocket.
+     The joint checking balance is shown as a check only; it holds bill money too, so it isn't part of Left.
+     (Nov 8 – Nov 10 Left came from the bank balance minus guessed bills; that guess ran $342 high on Nov 10.) */
+  var jointLeft = r2(inJoint - tag.Joint - tag[EJ] / 2 - cash - jb.spend), bankJoint = null;
   var acct = jointAcct();
-  if (acct) {
-    try {
-      var unpaidCard = function (c) { var k = find('Cards', c.cardId); return !(k && k.paid); };
-      var jl = live.filter(unpaidCard);
-      var jCards = r2(sum(jl.filter(function (c) { return c.who === 'Joint'; }), function (c) { return c.amount; }) +
-                      sum(jl.filter(function (c) { return c.who === EJ; }), function (c) { return c.amount; }) / 2);
-      var pendOut = r2(-sum(jb.lines.filter(function (l) { return l.row.pending && l.row.amount < 0 && l.how !== 'typed'; }), function (l) { return l.row.amount; }));
-      var jbl = jointBills(jb);
-      bankJoint = { balance: +acct.balance || 0, pendingOut: pendOut, bills: jbl, cards: jCards, cash: r2(cash) };
-      jointLeft = r2(bankJoint.balance - pendOut - jbl.dueAmt - jCards - cash);
-    } catch (e) { console.error(e); bankJoint = null; }
-  }
+  if (acct) bankJoint = { balance: +acct.balance || 0 };
   return {
     tag: tag, onCards: onCards, untagged: Math.round((onCards - tagged) * 100) / 100,
     needN: live.filter(function (c) { return WHO.indexOf(c.who) < 0; }).length,
@@ -711,7 +707,7 @@ function calc() {
     returning: S.Charges.filter(function (c) { return c.ret; }),
     pend: pendingMath(),
     eric: tag.Eric + tag.Split / 2 + tag[EJ] / 2, arianna: tag.Arianna + tag.Split / 2, jointCards: tag.Joint + tag[EJ] / 2,
-    inJoint: inJoint, cash: cash, bankJoint: bankJoint,
+    inJoint: inJoint, pot: pot, cash: cash, bankJoint: bankJoint,
     jointBank: jb, jointLeft: jointLeft,
     us1: us1, us15: us15, tot1: sum(b1, function (b) { return b.total; }), tot15: sum(b15, function (b) { return b.total; }),
     ourTotal: ourTotal, half: half, paycheck: half / 2, bank: half - us15,
@@ -924,7 +920,7 @@ function viewCards(m) {
   h += '<div class="tiles">' +
     tile('Eric owes', m.eric, { hint: m.pend.eric ? 'With pending: ' + money(m.eric + m.pend.eric) : 'His charges + half of Split and Eric + Joint' }) +
     tile('Arianna owes', m.arianna, { hint: m.pend.arianna ? 'With pending: ' + money(m.arianna + m.pend.arianna) : 'Her charges + half of Split' }) +
-    tile('Joint money left', m.jointLeft, { sign: true, act: 'joint', hint: m.pend.joint ? 'After pending: ' + money(m.jointLeft - m.pend.joint) : 'Tap to change what’s in the joint' }) +
+    tile('Joint left to spend', m.jointLeft, { sign: true, act: 'joint', hint: m.pend.joint ? 'After pending: ' + money(m.jointLeft - m.pend.joint) : 'Tap to see how it adds up' }) +
     tile('Bills on cards', m.tag.Bills, { hint: 'Already in the monthly budget' }) +
     // the total includes pending charges that aren't on hold (Eric, Nov 6, 2026)
     tile('Total on all cards', r2(m.onCards + m.pend.all), { hint: m.needN ? m.needN + (m.needN === 1 ? ' charge needs' : ' charges need') + ' a person' :
@@ -1185,30 +1181,43 @@ function sinceNudge(m) {
     ' for next time so ' + (ids.length === 1 ? 'it isn’t' : 'they aren’t') + ' paid with this card transfer?</span><button class="btn small primary" data-act="holdnew" data-ids="' + esc(ids.join(',')) + '">Hold ' + (ids.length === 1 ? 'it' : 'them') + '</button></div>';
 }
 
+/* The Joint page (Nov 10, 2026): one number, Left to spend, worked out like a receipt:
+   spending money in (Groceries + Spending money from Monthly Bills + anything added) − spent = left. */
 function viewJoint(m) {
-  var jb = m.jointBank, spent = m.jointCards + m.cash + jb.spend, acct = jointAcct(), bj = m.bankJoint, jbl = bj ? bj.bills : null;
-  var h = '<h1>Joint Account</h1><p class="sub">' + (bj ? 'Left starts from the joint checking balance at the bank, then takes out bills not paid yet, bills on the cards, joint charges on the cards and anything paid out of pocket.'
-    : 'What’s in the joint, minus joint charges on the cards, debit spending from joint checking, and anything paid out of pocket.') + '</p>';
-  h += '<div class="tiles">' + tile('In the joint account', m.inJoint) +
-    tile('Spent from the joint', spent, { hint: money(m.jointCards) + ' on cards · ' + (acct ? money(jb.spend) + ' debit · ' : '') + money(m.cash) + ' out of pocket' }) +
-    tile('Left', m.jointLeft, { sign: true, warn: m.jointLeft - m.pend.joint < -0.004, hint: (bj ? 'Bank ' + money(bj.balance) + (bj.pendingOut ? ' − ' + money(bj.pendingOut) + ' pending' : '') +
-      ' − ' + money(bj.bills.dueAmt) + ' bills − ' + money(bj.cards) + ' joint on cards' + (bj.cash ? ' − ' + money(bj.cash) + ' out of pocket' : '') + '. ' : '') +
-      (m.pend.joint ? 'After pending: ' + money(m.jointLeft - m.pend.joint) : '') }) +
-    (acct ? tile('Joint checking at the bank', acct.balance, { hint: jb.ask ? jb.ask + ' line' + (jb.ask === 1 ? ' needs' : 's need') + ' an answer' : 'Holds bill money too', warn: !!jb.ask }) : '') +
-    (jbl ? tile('Joint after bills', jbl.left, { sign: true,
-      hint: jbl.dueAmt ? 'Bank minus ' + money(jbl.dueAmt) + ' in bills still to come out' : 'No bill money left to come out' }) : '') + '</div>';
-  h += jointBankPanel(jb, jbl);
-  var rows = S.Joint.slice().sort(byOrder);
-  h += '<div class="cols"><section class="panel" style="--c:#E8590C"><div class="phead"><div class="grow"><div class="eyebrow">Money in</div>' +
-    '<div style="font-size:20px;font-weight:800">What’s in the joint</div></div><div class="big num">' + money(m.inJoint) + '</div></div>';
-  h += '<div class="rows">' + (rows.length ? rows.map(function (j) {
+  var jb = m.jointBank, acct = jointAcct(), pot = m.pot, left = m.jointLeft, pend = r2(m.pend.joint || 0), after = r2(left - pend);
+  var spent = r2(m.jointCards + m.cash + jb.spend), short = after < -0.004;
+  var nCards = S.Charges.filter(function (c) { return (c.who === 'Joint' || c.who === EJ) && counts(c); }).length;
+  var h = '<h1>Joint Account</h1><p class="sub">Your spending money for this pay period: groceries and the extra from Monthly Bills, plus anything you add. Left is what’s still there to spend.</p>';
+  h += '<section class="panel jhero' + (short ? ' short' : '') + '"><div class="eyebrow">Left to spend</div>' +
+    '<div class="jh-val num' + (left < -0.004 ? ' neg' : '') + '">' + money(left) + '</div><div class="jh-sub">' + money(m.inJoint) + ' spending money − ' + money(spent) + ' spent' +
+    (pend ? ' · after ' + money(pend) + ' pending: <b>' + money(after) + '</b>' : '') + '</div>' +
+    (short ? '<div class="jh-short">The joint is short ' + money(-after) + ': ' + money(r2(-after / 2)) + ' each.</div>' : '') + '</section>';
+
+  h += '<section class="panel jpot" style="--c:#E8590C;margin-bottom:16px"><div class="phead"><div class="grow"><div class="eyebrow">This pay period</div>' +
+    '<div style="font-size:20px;font-weight:800">How it adds up</div></div></div>';
+  h += '<div class="fline top"><div><b>Spending money in</b></div><div class="num">' + money(m.inJoint) + '</div></div>';
+  h += pot.lines.map(function (l) {
+    return '<div class="fline"><div>' + esc(l.name) + '<div class="sub2">' + esc(l.from) + ' on Monthly Bills (' + esc(l.bill.payOn) + ')</div></div><div class="num">' + money(l.amount) + '</div></div>';
+  }).join('');
+  h += '<div class="rows">' + pot.typed.map(function (j) {
     return '<div class="row g-two">' + textCell('Joint', j.id, 'item', j.item) + amtCell('Joint', j.id, 'amount', j.amount) +
       '<button class="x" data-act="del" data-t="Joint" data-id="' + j.id + '">×</button></div>';
-  }).join('') : '<div class="empty">Nothing in the joint yet.</div>') + '</div>';
-  h += '<form class="addrow" data-form="joint"><input class="f-item" name="item" placeholder="e.g. Groceries, extra 50" id="add-joint" autocomplete="off">' +
-    '<input class="f-amt num" name="amount" placeholder="0.00" inputmode="decimal" autocomplete="off"><button class="btn primary">Add</button></form></section>';
+  }).join('') + '</div>';
+  h += '<form class="addrow" data-form="joint"><input class="f-item" name="item" placeholder="Add money, e.g. Dance" id="add-joint" autocomplete="off">' +
+    '<input class="f-amt num" name="amount" placeholder="0.00" inputmode="decimal" autocomplete="off"><button class="btn primary">Add</button></form>';
+  h += '<div class="fline top"><div><b>Spent</b></div><div class="num neg-out">− ' + money(spent) + '</div></div>';
+  h += '<div class="fline"><div>Joint charges on the cards<div class="sub2">' + nCards + ' charge' + (nCards === 1 ? '' : 's') + ', listed below' +
+    (m.tag[EJ] ? ' (Eric + Joint counts half)' : '') + '</div></div><div class="num neg-out">− ' + money(m.jointCards) + '</div></div>';
+  if (acct) h += '<div class="fline"><div>Debit from joint checking<div class="sub2">Groceries or other spending paid straight from the joint' + (jb.since ? ', since ' + shortDate(jb.since) : '') +
+    (jb.ask ? '. <b style="color:#8F5B00">' + jb.ask + ' line' + (jb.ask === 1 ? ' needs' : 's need') + ' an answer below</b>' : '') + '</div></div><div class="num neg-out">− ' + money(jb.spend) + '</div></div>';
+  h += '<div class="fline"><div>Paid out of pocket</div><div class="num neg-out">− ' + money(m.cash) + '</div></div>';
+  h += '<div class="fline total"><div><b>Left to spend</b></div><div class="num' + (left < -0.004 ? ' neg-out' : '') + '">' + money(left) + '</div></div>';
+  if (pend) h += '<div class="fline reserve"><div>Joint charges still pending</div><div class="num neg-out">− ' + money(pend) + '</div></div>' +
+    '<div class="fline total"><div><b>After pending</b></div><div class="num' + (short ? ' neg-out' : '') + '">' + money(after) + '</div></div>';
+  h += '</section>';
+  h += jointBankPanel(jb);
 
-  h += '<div style="display:grid;gap:16px">';
+  h += '<div class="cols">';
   var cash = (S.JointCash || []).slice().sort(newestFirst);
   h += '<section class="panel" style="--c:#2B8A3E"><div class="phead"><div class="grow"><div class="eyebrow">Money out</div>' +
     '<div style="font-size:20px;font-weight:800">Paid out of pocket</div></div><div class="big num">' + money(m.cash) + '</div></div>' +
@@ -1236,7 +1245,7 @@ function viewJoint(m) {
     (jp.length ? '<small>+ ' + money(m.pend.joint) + ' pending</small>' : '') + '</div></div><div class="rows">';
   h += (jp.length || jc.length) ? jp.map(function (c) { return line(c, true); }).join('') + jc.map(function (c) { return line(c, false); }).join('')
     : '<div class="empty">No joint charges.</div>';
-  h += '</div></section></div></div>';
+  h += '</div></section></div>';
   return h;
 }
 
@@ -1258,7 +1267,33 @@ function jointAcct() {
   return (set && list.filter(function (a) { return a.id === set; })[0]) ||
     list.filter(function (a) { return !a.cardId && /joint/i.test(a.name) && /check/i.test(a.name); })[0] || null;
 }
-function jointSince() { return setting('jointSince', '') || setting('syncStart', '') || ''; }
+/* debit spending counts from the later of the "Since" date and the start of this pay period (set when a pay period is filed),
+   so last period's spending doesn't come out of this period's spending money (Nov 10, 2026) */
+function jointSince() {
+  var s = setting('jointSince', '') || setting('syncStart', '') || '', p = setting('periodStart', '') || '';
+  return p > s ? p : s;
+}
+/* ---- spending money in the joint for this pay period (Eric, Nov 10, 2026): Groceries (Food) and Spending money (Extra)
+   come from Monthly Bills for the bill date this check pays (1st or 15th; an extra check uses the 15th amounts, since it
+   sends half of Food and Extra too), plus anything typed in on the Joint page (Dance, a birthday, ...). */
+var JOINT_POT_BILLS = [['Groceries', /^(food|groceries|grocery)$/, 'Food'], ['Spending money', /^extra$/, 'Extra']];
+var JOINT_POT_OLD = /^(food|groceries|grocery|extra|joint budget|budget|spending money|spending)$/;   // typed rows these replace
+function jointPotDay() {
+  var t = today(), cur = null;
+  try { payPlan().forEach(function (p) { if (p.date <= t) cur = p; }); } catch (e) { cur = null; }
+  return cur && cur.bill ? (cur.bill.slice(8) === '01' ? '1st' : '15th') : '15th';
+}
+function jointPot() {
+  var day = jointPotDay(), bills = S.Bills || [];
+  var lines = JOINT_POT_BILLS.map(function (x) {
+    var nm = function (b) { return x[1].test(String(b.name || '').trim().toLowerCase()); };
+    var b = bills.filter(function (b) { return b.payOn === day && nm(b); })[0] || bills.filter(nm)[0];
+    return { name: x[0], from: x[2], amount: b ? (+b.us || 0) : 0, bill: b || null };
+  }).filter(function (l) { return l.bill; });
+  var typed = (S.Joint || []).slice().sort(byOrder);
+  return { day: day, lines: lines, typed: typed,
+           total: r2(sum(lines, function (l) { return l.amount; }) + sum(typed, function (j) { return +j.amount || 0; })) };
+}
 function jointBillFor(name) {
   var k = storeKey(name);
   // generic bill names (Food, Extra, Savings…) would swallow real spending like "Food Lion", so they never match
@@ -1355,26 +1390,17 @@ function jointKindSelect(l) {
     opts.map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === (l.answered ? l.kind : '') ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('') + '</select>';
 }
 var jointOpen = remember('jointOpen') === '1';      // the list of joint checking lines starts folded away; this device remembers
-function jointBankPanel(jm, jbl) {
+function jointBankPanel(jm) {
   var acct = jointAcct();
   if (!acct) return '';
   jm = jm || jointMath();
-  if (!jbl) { try { jbl = jointBills(jm); } catch (e) { jbl = null; } }
-  var h = '<section class="panel fudget" style="--c:#FAB005;margin-bottom:16px"><div class="phead"><div class="grow"><div class="eyebrow">Joint checking</div>' +
-    '<div style="font-size:20px;font-weight:800">Joint checking at the bank</div><div class="sub2">' + esc(acctLabel(acct)) + ' · M&amp;T balance' +
-    (jm.pending ? ' · ' + money(jm.pending) + ' pending' : '') + '</div></div>' +
+  var h = '<section class="panel fudget" style="--c:#FAB005;margin-bottom:16px"><div class="phead"><div class="grow"><div class="eyebrow">For checking only</div>' +
+    '<div style="font-size:20px;font-weight:800">Joint checking at the bank</div><div class="sub2">' + esc(acctLabel(acct)) +
+    (jm.pending ? ' · ' + money(jm.pending) + ' pending' : '') + '. This includes bill money, so it’s more than what’s left to spend.</div></div>' +
     '<div class="big num">' + money(acct.balance) + '<small>at the bank</small></div></div>';
-  h += '<div class="fline top"><div><b>Debit spending from the joint</b><div class="sub2">Already out of the bank balance, so Left includes it. Answering lines keeps this list and the bills check right.</div></div>' +
+  h += '<div class="fline top"><div><b>Debit spending from the joint</b><div class="sub2">Mark each money-out line below: Joint spending comes out of Left; bills and transfers don’t.</div></div>' +
     '<div class="num neg-out">− ' + money(jm.spend) + '</div><div class="fl-tools"><span class="sub2" style="margin:0">Since</span>' +
-    '<input class="datein" style="width:auto;padding:4px 8px" type="date" data-t="Settings" data-id="jointSince" data-f="value" value="' + esc(jm.since) + '" title="Joint spending counts from this date. Clearing out-of-pocket moves it to that day."></div></div>';
-  if (jbl) {
-    var cardNames = {}; jbl.onCards.forEach(function (c) { cardNames[c.item] = 1; });
-    h += '<div class="fline"><div><b>Bills still to come out</b><div class="sub2">' +
-      (jbl.due.length ? 'Not green yet: ' + jbl.due.map(function (x) { return esc(x.b.name) + ' ' + money(x.left) + (x.left < x.owed - 0.004 ? ' (rest)' : ''); }).join(' · ') : 'Every bill is green or paid.') +
-      (jbl.onCards.length ? '<br>On cards, labeled Bills: ' + money(jbl.cardAmt) + ' (' + Object.keys(cardNames).map(esc).join(', ') + '). That money leaves the joint when the cards are paid.' : '') +
-      '</div><div class="sub2">A bill paid straight from joint checking has already left the balance, so it isn’t counted again. Food, Extra and other spending money stay in Left.</div>' +
-      '</div><div class="num neg-out">− ' + money(jbl.dueAmt) + '</div><div class="fl-tools"><span class="sub2" style="margin:0">After bills ' + money(jbl.left) + '</span></div></div>';
-  }
+    '<input class="datein" style="width:auto;padding:4px 8px" type="date" data-t="Settings" data-id="jointSince" data-f="value" value="' + esc(jm.since) + '" title="Joint spending counts from this date (never before this pay period started). Clearing out-of-pocket moves it to that day."></div></div>';
   var nOut = jm.lines.filter(function (l) { return l.row.amount < 0 && l.counted; }).length;
   var toggle = '<button class="btn small" data-act="jointtoggle">' + (jointOpen ? 'Hide the bank lines' : 'Show the ' + jm.lines.length + ' bank line' + (jm.lines.length === 1 ? '' : 's') + ' and answers') + '</button>';
   if (!jointOpen) {
@@ -2503,6 +2529,16 @@ function prep() {
   try { (S.Checking || []).forEach(function (r) { if (!r.manual && !r.kind && r.amount > 0 && PAYROLL.test(r.name || '')) setKind(r.id, 'pay'); }); } catch (e) { console.error(e); }
   try { settlePaidPending(); } catch (e) { console.error(e); }
   try { autoWrap(); } catch (e) { console.error(e); }
+  try { jointPotMove(); } catch (e) { console.error(e); }
+}
+/* once (Nov 10, 2026): Groceries and the joint budget now come from Monthly Bills, so the typed rows for them go away
+   (they'd count twice). Anything else typed in (Dance...) stays. */
+function jointPotMove() {
+  if (setting('jointPot', '') === '1') return;
+  var hasBills = jointPot().lines.length > 0;
+  undoLabel = 'taking Groceries and the joint budget off the typed list (they come from Monthly Bills now)';
+  if (hasBills) (S.Joint || []).slice().forEach(function (j) { if (JOINT_POT_OLD.test(String(j.item || '').trim().toLowerCase())) removeRow('Joint', j.id); });
+  setSetting('jointPot', '1');
 }
 /* if a pay period was never wrapped up and another paycheck has already landed after the next one, file it */
 function autoWrap() {
