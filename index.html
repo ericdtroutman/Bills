@@ -1092,12 +1092,25 @@ function payPendingOff(cardId, onlyIds) {
   var pp = (S.Pending || []).filter(function (x) { return x.cardId === cardId && !x.hold && !have[x.bankId] && (!onlyIds || onlyIds.indexOf(x.id) >= 0); });
   pp.forEach(function (x) { list.push({ bankId: x.bankId, cardId: cardId, item: x.item, amount: +x.amount, who: x.who || '', date: x.date || '', on: today(), posted: '' }); });
   if (pp.length) setSetting('paidPending', JSON.stringify(list));
+  // your share of a pending charge the card payment covered is still owed to the joint until your card transfer pays it
+  // (Nov 10, 2026: it used to drop out of My Money as soon as it was marked paid)
+  var mineP = pp.filter(function (x) { return x.who === 'Eric' || halfMine(x.who); });
+  if (mineP.length && ((S.Checking || []).length || setting('cardLedger', null) !== null)) {
+    var led = ledger(), inLed = {}; led.forEach(function (e) { if (e.bankId) inLed[e.bankId] = 1; });
+    mineP.forEach(function (x) { if (inLed[x.bankId]) return;
+      led.push({ id: uid('lg'), src: 'cleared', cardId: cardId, bankId: x.bankId, item: x.item, date: x.date || '', full: +x.amount,
+                 mine: halfMine(x.who) ? x.amount / 2 : +x.amount, split: halfMine(x.who), cover: '', pid: '', on: today() }); });
+    saveLedger(led);
+  }
   settlePaidPending();
   return pp.length;
 }
 function unpayPending(bankId) {
   var list = paidPendingList().filter(function (e) { return !(e.bankId === bankId && !e.posted); });
-  setSetting('paidPending', JSON.stringify(list)); settlePaidPending();
+  setSetting('paidPending', JSON.stringify(list));
+  var led = ledger(), keep = led.filter(function (e) { return !(e.src === 'cleared' && e.bankId === bankId && !e.cover && !e.pid); });
+  if (keep.length !== led.length) saveLedger(keep);
+  settlePaidPending();
 }
 function settlePaidPending() {
   if (!S._pendingAll) S._pendingAll = (S.Pending || []).slice();   // what the bank sent; S.Pending is this minus the paid ones
@@ -2006,9 +2019,10 @@ function uncoverFor(rowId) {
 }
 function setKind(id, k) {
   var r = find('Checking', id); if (!r) return;
-  if (r.kind === 'cards' && k !== 'cards') uncoverFor(id);
+  var was = r.kind;            // upsert changes r in place, so remember the old answer first (Nov 10, 2026: coverFor never ran)
+  if (was === 'cards' && k !== 'cards') uncoverFor(id);
   upsert('Checking', { id: id, kind: k });
-  if (k === 'cards' && r.kind !== 'cards') coverFor(id);
+  if (k === 'cards' && was !== 'cards') coverFor(id);
 }
 /* the bank caught up with something you typed in: the bank line takes your answer, the typed one goes away */
 function linkRows(bankId, manualIds) {

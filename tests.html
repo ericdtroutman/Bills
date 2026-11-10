@@ -711,6 +711,49 @@ SCENARIOS.push({
   ]
 });
 
+// Nov 10, 2026: answering a bank line "My card share" has to check off the card charges it paid (it didn't: setKind read the
+// answer after saving it), and your share of a pending charge paid with the card stays owed until your card transfer pays it.
+SCENARIOS.push({
+  title: 'Answering a bank line "My card share" pays off cleared charges',
+  about: 'Amex $500 (Eric) is still on the card. Chase has Costco $241.60 (Split) and a pending $40 game (Eric). Chase is paid and cleared, then $160.80 (half of Costco + the game) goes to the joint and the bank line is answered My card share.',
+  needs: 'payPendingOff',
+  data: (function () {
+    var d = startingData();
+    d.Pending = [{ id: 'pd_game', cardId: 'c_chase', item: 'GAME STORE', amount: 40, who: 'Eric', date: '2026-10-20', bankId: 'bk_game', hold: false }];
+    return d;
+  })(),
+  steps: [
+    { t: 'Before: you owe $500 + $120.80 + $40', run: function () { SCENARIOS[SCENARIOS.length - 1].r0 = mm().really; },
+      check: function () { return [money('Owed on the cards', 660.80, mm().owedNet)]; } },
+    { t: 'Pay and clear Chase', run: function () {
+        A.confirmBox = function (t, x, ok, cb) { cb(); };
+        A.document.body.insertAdjacentHTML('beforeend', '<button id="t_clr2" data-act="clearcard" data-id="c_chase"></button>');
+        A.document.getElementById('t_clr2').click(); },
+      check: function () { var m = mm(); return [
+        yes('The game is out of pending', !A.S.Pending.some(function (p) { return p.id === 'pd_game'; })),
+        money('Still owed: nothing sent yet, so clearing changes nothing', 660.80, m.owedNet),
+        money('Really yours unchanged', SCENARIOS[SCENARIOS.length - 1].r0, m.really)]; } },
+    { t: 'The $160.80 to the joint shows at the bank; answer My card share', run: function () {
+        bankLine('bk_share', '2026-10-27', 'WEB TRANSFER TO CHK 4410', -160.80); setBalance(1000 - 160.80);
+        A.setKind('bk_share', 'cards'); },
+      check: function () { var m = mm(), led = A.ledger();
+        return [money('Only the Amex $500 is still owed', 500, m.owedNet),
+          yes('Costco half and the game are checked off by that transfer', led.length === 2 && led.every(function (e) { return e.cover === 'bk_share'; }), JSON.stringify(led.map(function (e) { return e.item + ':' + e.cover; }))),
+          money('Nothing left over', 0, A.find('Checking', 'bk_share').extra + A.find('Checking', 'bk_share').credit),
+          money('Really yours unchanged (the money left, and so did what you owed)', SCENARIOS[SCENARIOS.length - 1].r0, m.really), pagesDraw()]; } },
+    { t: 'Change the answer to Spending, then back to My card share', run: function () {
+        A.setKind('bk_share', 'spend'); SCENARIOS[SCENARIOS.length - 1].o1 = mm().owedNet; A.setKind('bk_share', 'cards'); },
+      check: function () { return [money('As Spending, the cleared charges are owed again', 660.80, SCENARIOS[SCENARIOS.length - 1].o1),
+        money('Back to My card share: $500', 500, mm().owedNet)]; } },
+    { t: '"Not paid" on a pending charge takes your share back off the list', run: function () {
+        A.S._pendingAll.push({ id: 'pd_more', cardId: 'c_chase', item: 'SNACK', amount: 3, who: 'Eric', date: '2026-10-21', bankId: 'bk_more', hold: false });
+        A.settlePaidPending(); A.payPendingOff('c_chase', ['pd_more']); SCENARIOS[SCENARIOS.length - 1].o2 = mm().owedNet; A.unpayPending('bk_more'); },
+      check: function () { return [money('Paid while pending: still owed', 503, SCENARIOS[SCENARIOS.length - 1].o2),
+        money('Not paid: owed once, as a pending charge', 503, mm().owedNet),
+        yes('No extra list entry left behind', !A.ledger().some(function (e) { return e.bankId === 'bk_more'; }))]; } }
+  ]
+});
+
 /* ---------------------------------------------------------------- run and show */
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
