@@ -2075,10 +2075,10 @@ function donut(t) {
     money(total).replace('.00', '') + '</text></svg><div class="pie-legend">' + legend + '</div></div>';
 }
 
-function typeTotals(p) {
-  var t = {};
+function typeTotals(p, skip) {
+  var t = {}; skip = skip || [];
   TYPES.forEach(function (k) { t[k] = 0; });
-  p.lines.forEach(function (l) { t[typeOf(l.name)] += l.amount; });
+  p.lines.forEach(function (l) { if (skip.indexOf(l) < 0) t[typeOf(l.name)] += l.amount; });
   p.rows.forEach(function (r) { if (r.amount < 0 && (r.kind === 'spend' || !r.kind)) t[typeOf(r.name)] += Math.abs(r.amount); });
   t.Bills += p.bills + p.reserve;
   t['Covered for joint'] += p.joint;
@@ -2088,8 +2088,8 @@ function typeTotals(p) {
 function trendBars(mm) {
   var P = (S.Periods || []).slice().sort(function (a, b) { return String(a.endDate).localeCompare(String(b.endDate)); }).slice(-11);
   var cols = P.map(function (p) { return { label: shortDate(p.endDate), spent: (+p.cards || 0) + (+p.spend || 0) + (+p.bills || 0) + (+p.joint || 0), saved: +p.saved || 0 }; });
-  var now = mm.two ? mm.P.old : mm.P.cur;
-  cols.push({ label: 'Now', spent: now.cards + now.spend + now.bills + now.reserve + now.joint, saved: now.saved });
+  var nowKey = mm.two ? 'old' : 'cur', now = mm.P[nowKey], earlier = sum(potBefore(mm, nowKey), function (l) { return l.amount; });
+  cols.push({ label: 'Now', spent: now.cards - earlier + now.spend + now.bills + now.reserve + now.joint, saved: now.saved });
   if (cols.length < 2) return '<div class="empty" style="padding:14px 0">Your trend fills in after your first wrap-up.</div>';
   var max = Math.max.apply(null, cols.map(function (c) { return Math.max(c.spent, c.saved); }).concat([1]));
   var W = 36, gap = 18, H = 120, w = cols.length * (W + gap);
@@ -2186,7 +2186,7 @@ function moneyLine(l) {
     (l.date && l.date !== '9999' ? shortDate(l.date) + ' · ' : '') + l.sub + '</div></div>' +
     '<div class="num ' + (l.amount > 0 ? 'pos-txt' : 'neg-out') + '">' + sign + money(Math.abs(l.amount)) + '</div><div class="fl-tools">' + tools + '</div></div>';
 }
-function potLines(mm, key) {
+function potLines(mm, key, keepBefore) {
   var p = mm.P[key], out = [], two = mm.two;
   var nextOn = key === 'next' || key === 'new';
   var wait = {}; mm.waiting.forEach(function (w) { wait[w.row.id] = w; });
@@ -2211,27 +2211,78 @@ function potLines(mm, key) {
       var sub = 'Card transfer ' + money(Math.abs(r.amount)) + ' · paid ' + covered.length + ' card charge' + (covered.length === 1 ? '' : 's') + ' (' + money(sum(covered, function (l) { return l.amount; })) + ')' +
         (+r.credit ? ' · ' + money(r.credit) + ' toward the rest' : '') + ' · ' + src;
       out.push(Object.assign(base, { name: +r.extra ? 'Covered for the joint' : 'Card transfer', amount: -(+r.extra || 0), sub: sub, fixed: +r.extra ? 'Covered for joint' : 'Cards', muted: !(+r.extra) }));
-    } else out.push(Object.assign(base, { name: xn || r.name, amount: r.amount, sub: raw + src + (r.kind ? '' : ' · not answered yet'), type: !xn, fixed: xn ? 'Transfer' : '' }));
+    } else out.push(Object.assign(base, { name: xn || r.name, amount: r.amount, sub: raw + src + (r.kind ? '' : ' · not answered yet'), type: !xn, fixed: xn ? 'Transfer' : '', spent: r.amount < 0 }));
   });
+  var before = {}; if (!keepBefore) potBefore(mm, key).forEach(function (l) { before[l.id] = 1; });
   p.lines.forEach(function (l) {
+    if (before[l.id]) return;
     var how = l.cover ? 'paid with the card transfer' : l.cleared ? 'cleared on Cards, not sent yet' : 'not sent yet';
     out.push({ name: l.name, date: l.date, amount: -l.amount, type: true,
                sub: (l.pending ? 'Pending · ' : '') + esc(l.from) + (l.split ? ' · your half of ' + money(l.full) : '') + ' · ' + how + (l.hold && !two ? ' · on hold on the Cards page' : ''),
-               next: l.cover || l.src === 'ledger' ? undefined : (two ? nextOn : l.hold), pots: two ? key : '', nextAct: 'hold', nextId: l.id, nextT: l.src === 'pending' ? 'Pending' : 'Charges' });
+               next: l.cover || l.src === 'ledger' ? undefined : (two ? nextOn : l.hold), pots: two ? key : '', nextAct: 'hold', nextId: l.id, nextT: l.src === 'pending' ? 'Pending' : 'Charges', spent: true });
   });
   if (p.reserve) out.push({ name: p.extra ? 'Extra check to the joint' : 'Bills', date: '9999', amount: -p.reserve, sub: p.extra ? extraLine() : 'From Monthly Bills · set aside until the bills transfer shows up', fixed: 'Bills', muted: true });
   out.sort(function (a, b) { return String(b.date || '').localeCompare(String(a.date || '')); });
   return out;
 }
+/* This pay period only (Eric, Nov 10, 2026: "the current way shows everything"). Card charges dated before the pay period
+   started are last pay period's, even when this week's card transfer paid them: they're folded into "Left from before"
+   instead of being listed as spending. Only pots with a carried-over start (cur, old) fold; 'new' has no start line. */
+function potSince(mm, key) {
+  if (key === 'cur' || key === 'old') return mm.startPay ? String(mm.startPay.date || '') : '';
+  return key === 'new' && mm.newest ? String(mm.newest.date || '') : '';
+}
+function potBefore(mm, key) {
+  var p = mm.P[key], s = potSince(mm, key);
+  if (!p || p.start === undefined || !s) return [];
+  return p.lines.filter(function (l) { return l.date && l.date < s && !l.hold; });
+}
+/* the receipt: left from before + money in − bills − covered for joint − savings − spent = yours. Adds up to p.total. */
+function potReceipt(mm, key) {
+  var p = mm.P[key], before = potBefore(mm, key), beforeAmt = r2(sum(before, function (l) { return l.amount; }));
+  var spentL = potLines(mm, key).filter(function (l) { return l.spent; });
+  var pay = sum(p.rows.filter(function (r) { return r.amount > 0 && isPay(r); }), function (r) { return r.amount; });
+  var rc = { since: potSince(mm, key), before: before, beforeAmt: beforeAmt, hasStart: p.start !== undefined,
+           income: r2(p.income), pay: r2(pay), bills: r2(p.bills + p.reserve), joint: r2(p.joint), saved: r2(p.saved),
+           spentL: spentL, spent: r2(-sum(spentL, function (l) { return l.amount; })), total: r2(p.total) };
+  // worked back from the total so the rows add up to the cent (half-cent split charges would otherwise leave a penny off)
+  rc.carried = rc.hasStart ? r2(rc.total - rc.income + rc.bills + rc.joint + rc.saved + rc.spent) : 0;
+  return rc;
+}
+var mmShowAll = {};
 function potPanel(mm, key, title, eyebrow, totalLabel, color) {
-  var p = mm.P[key], lines = potLines(mm, key);
+  var p = mm.P[key], rc = potReceipt(mm, key), all = potLines(mm, key);
   var h = '<section class="panel fudget" style="--c:' + color + '"><div class="phead"><div class="grow"><div class="eyebrow">' + eyebrow + '</div>' +
     '<div style="font-size:20px;font-weight:800">' + title + '</div></div><div class="big num">' + money(p.total) + '</div></div>';
-  if (p.start !== undefined && Math.abs(p.start) > 0.004)
-    h += '<div class="fline top"><div><b>' + (key === 'old' && mm.startPay ? 'Already in checking before ' + shortDate(mm.startPay.date) : key === 'cur' && mm.startPay ? 'Already in checking before ' + shortDate(mm.startPay.date) : 'Already in checking') + '</b><div class="sub2">Carried over. Worked out from your M&amp;T balance.</div></div><div class="num ' + (p.start < 0 ? 'neg-txt' : 'pos-txt') + '">' + (p.start < 0 ? '− ' : '+ ') + money(Math.abs(p.start)) + '</div><div></div></div>';
-  h += '<div class="rows">' + (lines.length ? lines.map(moneyLine).join('') : '<div class="empty">Nothing here yet.</div>') + '</div>';
-  h += '<div class="fline total"><div><b>' + totalLabel + '</b></div><div class="num big2 ' + (p.total < 0 ? 'neg-txt' : 'pos-txt') + '">' + (p.total < 0 ? '− ' : '+ ') + money(Math.abs(p.total)) + '</div><div></div></div></section>';
-  return h;
+  var row = function (label, sub, amt, cls) {
+    return '<div class="fline' + (cls ? ' ' + cls : '') + '"><div><b>' + label + '</b>' + (sub ? '<div class="sub2">' + sub + '</div>' : '') + '</div>' +
+      '<div class="num ' + (amt < 0 ? 'neg-out' : 'pos-txt') + '">' + (amt < 0 ? '− ' : '+ ') + money(Math.abs(amt)) + '</div><div></div></div>';
+  };
+  var since = rc.since ? shortDate(rc.since) : '';
+  if (rc.hasStart && (Math.abs(rc.carried) > 0.004 || rc.before.length))
+    h += row(since ? 'Left from before ' + since : 'Already in checking',
+      rc.before.length ? 'In checking before this paycheck, after the ' + money(rc.beforeAmt) + ' of last pay period’s card charges you paid this week' : 'Carried over. Worked out from your M&amp;T balance.', rc.carried, 'top');
+  if (rc.income > 0.004) h += row(Math.abs(rc.income - rc.pay) < 0.005 ? 'Paycheck' : rc.pay > 0 ? 'Paycheck and money in' : 'Money in', '', rc.income);
+  if (rc.bills > 0.004) h += row(p.reserve ? (p.extra ? 'Extra check to the joint' : 'Bills') : 'Bills to the joint', p.reserve ? 'Set aside until the transfer shows up' : '', -rc.bills);
+  if (rc.joint > 0.004) h += row('Covered for the joint', '', -rc.joint);
+  if (rc.saved > 0.004) h += row('To savings', '', -rc.saved);
+  h += row('Spent this pay period', rc.spentL.length ? rc.spentL.length + ' thing' + (rc.spentL.length === 1 ? '' : 's') + (since ? ' since ' + since : '') + ': your card charges and debit spending, listed below' : 'Nothing yet', -rc.spent);
+  h += '<div class="fline total"><div><b>' + totalLabel + '</b></div><div class="num big2 ' + (p.total < 0 ? 'neg-txt' : 'pos-txt') + '">' + (p.total < 0 ? '− ' : '+ ') + money(Math.abs(p.total)) + '</div><div></div></div>';
+  h += '<div class="fline top"><div><b>What you spent' + (since ? ' since ' + since : '') + '</b></div><div class="num">' + money(rc.spent) + '</div><div></div></div>';
+  h += '<div class="rows">' + (rc.spentL.length ? rc.spentL.map(moneyLine).join('') : '<div class="empty">Nothing spent yet this pay period.</div>') + '</div>';
+  var rest = all.filter(function (l) { return !l.spent; }), open = !!mmShowAll[key], n = rest.length + rc.before.length;
+  if (n) {
+    h += '<div class="pfoot"><button class="link" data-act="mmall" data-v="' + key + '">' + (open ? 'Hide' : 'Show') + ' paycheck, bills and transfers (' + n + ')</button><span></span></div>';
+    if (open) {
+      h += '<div class="rows">' + rest.map(moneyLine).join('') + '</div>';
+      if (rc.before.length) {
+        var bl = potLines(mm, key, true).filter(function (l) { return l.spent && rc.before.some(function (b) { return b.id === l.nextId; }); });
+        h += '<div class="fline top"><div><b>Last pay period’s card charges</b><div class="sub2">Dated before ' + since + ', paid this week. Counted in “Left from before”, not as spending now.</div></div><div class="num">' + money(rc.beforeAmt) + '</div><div></div></div>' +
+          '<div class="rows">' + bl.map(function (l) { return moneyLine(Object.assign({}, l, { muted: true, next: undefined })); }).join('') + '</div>';
+      }
+    }
+  }
+  return h + '</section>';
 }
 
 function viewMoney(m) {
@@ -2278,7 +2329,7 @@ function viewMoney(m) {
 
   var showKey = mm.two ? 'old' : 'cur';
   h += '<div class="cols" style="margin-top:16px"><section class="panel" style="--c:#E64980"><div class="phead"><div class="grow"><div class="eyebrow">' + (mm.two ? 'Last pay period' : 'This pay period') + '</div>' +
-    '<div style="font-size:20px;font-weight:800">Where my money went</div></div></div><div style="padding:0 20px 16px">' + donut(typeTotals(mm.P[showKey])) +
+    '<div style="font-size:20px;font-weight:800">Where my money went</div></div></div><div style="padding:0 20px 16px">' + donut(typeTotals(mm.P[showKey], potBefore(mm, showKey))) +
     '<div class="sub2" style="margin-top:10px">Types are guessed from the store name. Change one with the small menu on any line and that store remembers it.</div></div></section>' +
     '<section class="panel" style="--c:#37B24D"><div class="phead"><div class="grow"><div class="eyebrow">By pay period</div><div style="font-size:20px;font-weight:800">Spent vs. saved</div></div></div>' +
     '<div style="padding:0 20px 16px">' + trendBars(mm) + '</div></section></div>';
@@ -2911,6 +2962,7 @@ document.addEventListener('click', function (e) {
     upsert('Checking', { id: id, kind: 'pass', pairId: pw }); upsert('Checking', { id: pw, pairId: id }); render();
   }
   else if (a === 'mmdeps') { mmShowDeposits = !mmShowDeposits; render(); }
+  else if (a === 'mmall') { mmShowAll[b.dataset.v] = !mmShowAll[b.dataset.v]; render(); }
   else if (a === 'lrage') { var lrv = lrGet(); lrv.age = +b.dataset.v; lrSet(lrv); render(); }
   else if (a === 'svother') { svShowOther = !svShowOther; render(); }
   else if (a === 'logfunds') {

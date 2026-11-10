@@ -754,6 +754,36 @@ SCENARIOS.push({
   ]
 });
 
+// Nov 10, 2026: My Money shows this pay period only. A card charge from before the paycheck, paid by this period's card
+// transfer, is folded into "Left from before" instead of being listed as spending. The receipt must add up to the total.
+function receiptAddsUp(key) {
+  var m = mm(), rc = A.potReceipt(m, key), got = Math.round((rc.carried + rc.income - rc.bills - rc.joint - rc.saved - rc.spent) * 100) / 100;
+  return money('Receipt rows add up to the total, to the cent', Math.round(m.P[key].total * 100) / 100, got);
+}
+SCENARIOS.push({
+  title: 'My Money: this pay period only',
+  about: 'The pay period started with the Oct 9 paycheck. A $30 Eric charge from Oct 5 (last pay period) is paid by a $30 card transfer on Oct 12. It should not show as this period\'s spending.',
+  needs: 'potReceipt',
+  data: (function () {
+    var d = startingData();
+    d.Charges.push({ id: 'ch_old', cardId: 'c_amex', item: 'OLD GAS', amount: 30, who: 'Eric', order: 9, date: '2026-10-05', bankId: 'x9', hold: false, settled: '' });
+    d.Charges.push({ id: 'ch_half', cardId: 'c_chase', item: 'COFFEE', amount: 13.81, who: 'Split', order: 10, date: '2026-10-16', bankId: 'x10', hold: false, settled: '' });
+    return d;
+  })(),
+  steps: [
+    { t: 'The $30 card transfer shows at the bank; answer My card share', run: function () {
+        SCENARIOS[SCENARIOS.length - 1].r0 = mm().really;
+        bankLine('bk_old', '2026-10-12', 'WEB TRANSFER TO CHK 4410', -30); setBalance(970); A.setKind('bk_old', 'cards'); },
+      check: function () { var m = mm(), rc = A.potReceipt(m, 'cur'), t = pageText('Money'); return [
+        money('Really yours unchanged', SCENARIOS[SCENARIOS.length - 1].r0, m.really),
+        money('Last period\'s charge set apart', 30, rc.beforeAmt),
+        money('Spent this pay period: Target $500 + half of Costco $120.80 + half of coffee $6.905 + Tops $76.92', 704.63, rc.spent),
+        yes('The old charge isn\'t in the spending list', !rc.spentL.some(function (l) { return l.nextId === 'ch_old'; })),
+        receiptAddsUp('cur'),
+        says('Page shows the spending list', 'What you spent since', t), says('Page shows Left from before', 'Left from before', t), pagesDraw()]; } }
+  ]
+});
+
 /* ---------------------------------------------------------------- run and show */
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
