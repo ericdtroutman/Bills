@@ -299,6 +299,9 @@
   .qbtn:hover { border-color: var(--accent); color: var(--accent); }
   .qbtn.on { background: var(--ink); color: #fff; border-color: var(--ink); }
   .qbtn.muted { color: var(--muted); border-style: dashed; }
+  .q-btns:has(.choice) { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 6px; }
+  .qbtn.choice { border-radius: 12px; text-align: left; padding: 8px 11px; line-height: 1.25; }
+  .qbtn.choice small { display: block; font-weight: 500; font-size: 11.5px; color: var(--muted); margin-top: 2px; }
   .q-hint.link-hint { background: #E7F0FF; color: #1C4FB8; }
   .nextbox { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 3px 9px; font-size: 11.5px; font-weight: 700; color: var(--muted); }
   .nextbox:hover { border-color: var(--accent); color: var(--accent); }
@@ -1739,14 +1742,19 @@ function typeOf(name) {
 }
 function checkingAccounts() { return (S.BankAccounts || []).filter(function (a) { return a.cardId === 'checking'; }); }
 
-var KIND_LABEL = { pay: 'Paycheck', real: 'Other money (yours)', cardin: 'Card payment money', pass: 'Passing through', ignore: 'Already handled',
-  spend: 'Spending', cards: 'Card transfer', extra: 'Extra to cover the joint', bills: 'Bills transfer', savings: 'To savings', cardout: 'Card payment' };
-var IN_KINDS = ['pay', 'real', 'cardin', 'pass', 'ignore'];
-var OUT_KINDS = ['spend', 'cards', 'extra', 'bills', 'savings', 'cardout', 'pass', 'ignore'];
+/* the names on the "what is this?" choices for checking lines (cleaned up Nov 10, 2026: each says where the money goes, with a
+   one-line note under it, so "My card share → joint" is obviously the card transfer) */
+var KIND_LABEL = { pay: 'Paycheck', real: 'Other money in', cardin: 'Card money from the joint', pass: 'Passing through', ignore: 'Leave it out',
+  spend: 'My spending', cards: 'My card share → joint', extra: 'Shortfall → joint', bills: 'Bills money → joint', savings: 'To savings', cardout: 'Paying a credit card' };
+var IN_KINDS = ['pay', 'cardin', 'real', 'pass', 'ignore'];
+var OUT_KINDS = ['cards', 'bills', 'extra', 'cardout', 'savings', 'spend', 'pass', 'ignore'];
 var PASS_KINDS = { pass: 1, cardin: 1, cardout: 1 };
-var KIND_HELP = { ignore: 'Already happened before this pay period. Leave it out.', cardin: 'The joint sending back the money to pay the cards',
-  cardout: 'A card payment leaving checking, paid with the card payment money', extra: 'Extra you sent because the joint ran short',
-  pass: 'Venmo, Zelle or anything else you just move along' };
+var KIND_HELP = { pay: 'Your pay from the district', real: 'A refund, gift or anything else that’s yours',
+  cardin: 'The joint sending back the full card bill so you can pay the cards',
+  cards: 'Your half of the credit card bills, sent to the joint', bills: 'The payday transfer that pays the monthly bills',
+  extra: 'Your half when the joint ran short', cardout: 'A card payment, paid with the card money from the joint',
+  savings: 'Leftover moved to savings', spend: 'Something you bought with your debit card',
+  pass: 'Venmo, Zelle or anything you just move along', ignore: 'From before this pay period, or already counted' };
 var GENERIC_NAME = /transfer|xfer|zelle|venmo|cash app|paypal|deposit|withdraw|\bcheck\b|\batm\b|online|mobile|web /i;
 var CARDISH = /payment|epay|e-pay|autopay|amex|american express|chase|card|synchrony|citi|capital one|discover|barclay|crd|pmt/i;
 
@@ -2094,8 +2102,11 @@ function typeSelect(name) {
   return '<select class="mini-sel type-sel" style="--tc:' + TYPE_COLOR[cur] + '" data-t="TypeRules" data-id="' + esc(k) + '" data-f="type" title="Change the type for every “' + esc(name) + '” charge">' +
     TYPES.filter(function (t) { return t !== 'Bills' && t !== 'Covered for joint'; }).map(function (t) { return '<option' + (t === cur ? ' selected' : '') + '>' + t + '</option>'; }).join('') + '</select>';
 }
-function qb(id, k, label, cls, title) {
-  return '<button class="qbtn' + (cls ? ' ' + cls : '') + '" data-act="ckkind" data-id="' + esc(id) + '" data-k="' + k + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + label + '</button>';
+/* a transfer from checking into joint checking (by the bank's link, or the name) */
+function toJoint(r) { var j = jointAcct(); return r.amount < 0 && ((j && r.other === j.id) || /joint/i.test(r.name || '')); }
+function qb(id, k, label, cls, title, note) {
+  return '<button class="qbtn' + (cls ? ' ' + cls : '') + (note ? ' choice' : '') + '" data-act="ckkind" data-id="' + esc(id) + '" data-k="' + k + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + label +
+    (note ? '<small>' + esc(note) + '</small>' : '') + '</button>';
 }
 
 function questionsHtml(mm) {
@@ -2132,10 +2143,11 @@ function questionsHtml(mm) {
       else if (mm.passSit > 0.009 && amt <= mm.passSit + 5 && CARDISH.test(r.name))
         hint = '<div class="q-hint">A card payment, paid from the card money (' + money(mm.passSit) + ' still to go out)? ' + qb(id, 'cardout', 'Yes', 'on') + '</div>';
       else if (/ally|sav/i.test(r.name)) hint = '<div class="q-hint">Is this the leftover going to savings? ' + qb(id, 'savings', 'Yes', 'on') + '</div>';
+      else if (toJoint(r)) hint = '<div class="q-hint">Sent to the joint: your half of the card bills? ' + qb(id, 'cards', 'Yes, my card share', 'on') + '</div>';
     }
     var kinds = r.amount > 0 ? IN_KINDS : OUT_KINDS;
-    btns = kinds.map(function (k) { return qb(id, k, KIND_LABEL[k], k === 'ignore' ? 'muted' : '', KIND_HELP[k]); }).join('');
-    if (lastP && startDate && r.date < startDate) btns += qb(id, 'lastpp', 'Belongs to last pay period', 'muted', 'Files it with the pay period you already wrapped up');
+    btns = kinds.map(function (k) { return qb(id, k, KIND_LABEL[k], k === 'ignore' ? 'muted' : '', '', KIND_HELP[k]); }).join('');
+    if (lastP && startDate && r.date < startDate) btns += qb(id, 'lastpp', 'Last pay period', 'muted', '', 'Files it with the pay period you already wrapped up');
     h += '<div class="row q-row"><div><b>' + esc(xferName(r) || r.name) + '</b> <span class="num ' + (r.amount > 0 ? 'pos-txt' : '') + '">' + (r.amount > 0 ? '+' : '−') + money(amt) + '</span>' +
       '<div class="sub2">' + (xferName(r) ? esc(r.name) + ' · ' : '') + shortDate(r.date) + ' · M&amp;T checking · ' + (r.amount > 0 ? 'money in' : 'money out') + '</div>' + hint +
       '<div class="q-btns">' + btns + '</div></div></div>';
