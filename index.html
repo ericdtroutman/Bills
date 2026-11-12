@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -12,8 +12,11 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-180.png">
+<!-- The Inter font loads in the background, so the page shows right away (in the phone's own font for a moment) instead of waiting for Google Fonts. -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"></noscript>
 <style>
   :root {
     --bg: #F4F5F8; --surface: #FFFFFF; --ink: #161B26; --ink2: #3B4252; --muted: #7B8494;
@@ -122,7 +125,6 @@
   .whopick button.on { color: #fff; border-color: transparent; background: var(--w); }
 
   /* ---------- rows */
-  .rows { }
   .hrow, .row { display: grid; align-items: center; gap: 8px; padding: 0 20px; }
   .hrow { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 700;
     padding-top: 10px; padding-bottom: 6px; }
@@ -278,7 +280,6 @@
   #toast.on { opacity: 1; transform: translateX(-50%); }
   #toast a { color: #A5B8FF; }
 
-  .seg { display: none; }
   .fline { display: grid; grid-template-columns: 1fr 120px 250px; gap: 10px; align-items: center; padding: 9px 20px; border-top: 1px solid var(--line); }
   .fline .num { text-align: right; font-weight: 700; }
   .fline.top { background: #F3FBF5; border-top: 0; }
@@ -330,6 +331,7 @@
   .seg { display: flex; gap: 6px; margin-bottom: 12px; }
   .seg button { flex: 1; border: 1px solid var(--line); background: #fff; border-radius: 10px; padding: 8px; font-weight: 700; color: var(--ink2); }
   .seg button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .seg.bills-seg { display: none; }     /* the 1st / 15th switch: phones only (both columns show on a wide screen) */
   .pick { display: grid; gap: 8px; margin-bottom: 8px; }
   .pick .btn { text-align: left; }
   .q-hint { margin-top: 8px; font-size: 13px; font-weight: 600; color: #8F5B00; background: #FFF6D1; border-radius: 10px; padding: 8px 10px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
@@ -429,6 +431,7 @@
     .seg button { flex: 1; border: 0; background: transparent; padding: 9px; border-radius: 9px; font-weight: 700; color: var(--muted); }
     .seg button.on { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(16,24,40,.12); }
     .seg button span { font-weight: 600; margin-left: 4px; }
+    .seg.bills-seg { display: flex; top: calc(var(--top-h, 140px) + 6px); }   /* sticks just under the top bar, however tall it is */
     .cols.bills[data-side="1st"] > section:nth-child(2), .cols.bills[data-side="15th"] > section:nth-child(1) { display: none; }
     .phead { flex-wrap: nowrap; }
     .phead .grow { min-width: 0; }
@@ -451,6 +454,12 @@
     .big { font-size: 26px; }
     .tile .val { font-size: 21px; }
   }
+  @media (max-width: 600px) {
+    body:not(.locked) .brand-name { display: none; }
+    .search-wrap { order: 1; flex: 1 1 0; min-width: 0; }
+    .top-right { order: 2; flex-basis: 100%; gap: 8px; }
+    #status { flex: 1; min-width: 0; white-space: normal; line-height: 1.25; }
+  }
   @media (max-width: 480px) {
     .g-bill { grid-template-columns: 16px 26px 1fr 78px 26px 52px 20px; }
     .g-bill .c-total { display: none; }
@@ -460,7 +469,7 @@
 <body>
 <header class="top">
   <div class="top-in">
-    <div class="brand"><div class="logo">$</div>Bills</div>
+    <div class="brand"><div class="logo">$</div><span class="brand-name">Bills</span></div>
     <nav id="nav">
       <button data-act="nav" data-v="cards">Cards</button>
       <button data-act="nav" data-v="joint">Joint</button>
@@ -500,9 +509,8 @@ var lastWho = 'Joint';
 var billSide = remember('side') || '1st';
 var focusAfter = null;              // selector to focus after the next render
 var query = '', prevView = null, pastCharges = null, pastChecking = null, historyLoading = false;
-var openLogin = {};
-var openNote = {};
-                  // bills whose empty note box is open                 // which bills/cards have their login section open
+var openLogin = {};                 // which bills/cards have their login section open
+var openNote = {};                  // bills whose empty note box is open
 var showPw = {};                    // which passwords are showing
 
 /* ---- connection to your Google script (link + passcode are kept only on this device) */
@@ -540,8 +548,12 @@ function forget(k) { try { localStorage.removeItem('bills.' + k); } catch (e) {}
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
   return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function r2(n) { n = +n || 0; return Math.round(Math.abs(n) * 100 + 1e-6) / 100 * (n < 0 ? -1 : 1); }
+/* One shared number formatter and one date formatter (Nov 12, 2026). toLocaleString builds a new one on every call, which was
+   most of the time it took to draw a page; the text that comes out is the same. */
+var MONEY_FMT = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+var DAY_FMT = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }), DAY_SEEN = {};
 function money(n) { n = r2(n);
-  return (n < 0 ? '-' : '') + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  return (n < 0 ? '-' : '') + '$' + MONEY_FMT.format(Math.abs(n)); }
 function plain(n) { return r2(n).toFixed(2); }
 function parseAmt(v) { var n = parseFloat(String(v).replace(/[$,\s]/g, '')); return isNaN(n) ? null : Math.round(n * 100) / 100; }
 function sum(list, f) { return list.reduce(function (a, x) { return a + (+f(x) || 0); }, 0); }
@@ -570,12 +582,17 @@ function flush() {
     busy = false; fails++;
     queue = batch.concat(queue);
     if (authProblem(e)) { status('Not saved', true); showConnect(cleanMsg(e.message)); return; }
-    if (fails >= 5) { status('Not saved. Check your connection and reload.', true); return; }
+    if (fails >= 5) { status('Not saved yet. Will retry when you’re online.', true); return; }
     status('Couldn’t save, retrying…', true);
     setTimeout(flush, 1500 * fails);
   });
 }
 window.addEventListener('beforeunload', function (e) { if (busy || queue.length) { e.preventDefault(); e.returnValue = ''; } });
+/* Changes that didn't save (no signal, phone asleep) are sent again as soon as the connection is back or the app is opened
+   again, instead of waiting for a reload, which would lose them (Nov 12, 2026). Only while the app is unlocked. */
+function retrySave() { if (S && CONN.key && queue.length && !busy && !document.body.classList.contains('locked')) { fails = 0; flush(); } }
+window.addEventListener('online', retrySave);
+document.addEventListener('visibilitychange', function () { if (!document.hidden) retrySave(); });
 
 /* ---- undo: every change remembers how to put things back. Changes made in one go (one click,
    one drag, clearing a card) are undone together. */
@@ -743,7 +760,8 @@ function whoSelect(c, table) {
 }
 function shortDate(d) {
   if (!d) return '';
-  var x = new Date(d + 'T12:00:00'); return isNaN(x) ? d : x.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  if (DAY_SEEN[d] !== undefined) return DAY_SEEN[d];
+  var x = new Date(d + 'T12:00:00'); return (DAY_SEEN[d] = isNaN(x) ? d : DAY_FMT.format(x));
 }
 
 var GRIP_SVG = '<svg viewBox="0 0 10 16" fill="currentColor"><circle cx="2.5" cy="2.5" r="1.5"/><circle cx="7.5" cy="2.5" r="1.5"/><circle cx="2.5" cy="8" r="1.5"/><circle cx="7.5" cy="8" r="1.5"/><circle cx="2.5" cy="13.5" r="1.5"/><circle cx="7.5" cy="13.5" r="1.5"/></svg>';
@@ -1446,7 +1464,7 @@ function jointBankPanel(jm) {
       '<div class="num ' + (r.amount > 0 ? 'pos-txt' : l.spend ? 'neg-out' : '') + '">' + (r.amount > 0 ? '+ ' : '− ') + money(Math.abs(r.amount)) + '</div>' +
       '<div class="fl-tools">' + tools + '</div></div>';
   }).join('') : '<div class="empty">No lines yet. They come in with the daily bank sync.</div>';
-  h += '</div><div class="pfoot"><span style="font-size:12px;color:var(--muted)">Left is this balance minus the bill and card money still waiting to go out. Answers are kept by the bank line, so they stay put when the bank list refreshes.</span>' + toggle + '</div></section>';
+  h += '</div><div class="pfoot"><span style="font-size:12px;color:var(--muted)">Answers are kept by the bank line, so they stay put when the bank list refreshes.</span>' + toggle + '</div></section>';
   return h;
 }
 
@@ -1500,7 +1518,7 @@ function viewBills(m) {
     tile('Put in bank', m.bank, { hint: 'Half minus the 15th bills' }) +
     tile('Ferris pays', m.ferris) +
     tile('Still unpaid', m.unpaid, { hint: 'Our part' }) + '</div>';
-  h += '<div class="seg">' + ['1st', '15th'].map(function (p) {
+  h += '<div class="seg bills-seg">' + ['1st', '15th'].map(function (p) {
     return '<button class="' + (p === billSide ? 'on' : '') + '" data-act="side" data-p="' + p + '">' + p + ' <span class="num">' + money(p === '1st' ? m.us1 : m.us15) + '</span></button>';
   }).join('') + '</div>';
   h += '<div class="cols bills" data-side="' + billSide + '">' + billColumn('1st', '#1098AD', m) + billColumn('15th', '#F59F00', m) + '</div>';
@@ -2200,7 +2218,7 @@ function potLines(mm, key, keepBefore) {
   p.rows.forEach(function (r) {
     var base = { date: r.date, ck: r, mm: mm, del: r.manual ? r.id : '', chips: chipFor(r), next: isPay(r) ? undefined : nextOn, pots: two ? key : '',
                  nextAct: 'potnext', nextId: r.id };
-    var src = r.manual ? 'Typed in' + (r.note && r.name !== r.note ? '' : '') : 'M&T checking';
+    var src = r.manual ? 'Typed in' : 'M&T checking';
     var xn = xferName(r), raw = xn ? esc(r.name) + ' · ' : '';        // your nickname for the other account, when it's a transfer
     if (r.amount > 0) out.push(Object.assign(base, { name: xn || r.name, amount: r.amount, sub: (isPay(r) ? 'Paycheck · ' : '') + raw + src, fixed: isPay(r) ? 'Pay' : 'Money in' }));
     else if (r.kind === 'bills') out.push(Object.assign(base, { name: 'Bills', amount: r.amount, sub: (xn ? esc(xn) : 'To the joint · ' + esc(r.name)) + ' · ' + src, fixed: 'Bills' }));
@@ -2372,7 +2390,7 @@ function wrapPanel(mm, m) {
   var sentAmt = sum(sent, function (r) { return Math.abs(r.amount); });
   var extraDone = old.joint > 0.009;
   var suggest = extraDone ? 0 : mm.jointHalf;
-  var toSave = r2(mm.oldPot - (owedOld > 0.5 ? 0 : 0) - suggest);
+  var toSave = r2(mm.oldPot - suggest);
   var cardsOk = owedOld <= 0.5;
   var savedOk = old.saved > 0 && mm.oldPot - suggest <= 5;
   var steps = [
@@ -2550,7 +2568,7 @@ function linkBox(bankId) {
 
 function viewBank() {
   var connected = setting('bankConnected', '') === 'yes';
-  var h = '<h1>Bank Sync</h1><p class="sub">New card charges come in once a day from SimpleFIN. They land on the right card with no person picked, so all you do is choose who each one belongs to.</p>';
+  var h = '<h1>Bank Sync</h1><p class="sub">New card charges come in twice a day from SimpleFIN (about 8:30 AM and 11 PM). They land on the right card with no person picked, so all you do is choose who each one belongs to.</p>';
   if (!connected) {
     h += '<section class="panel" style="--c:#4C6EF5"><div class="phead"><div class="grow"><div class="eyebrow">Not connected</div>' +
       '<div style="font-size:20px;font-weight:800">Connect SimpleFIN</div></div></div><ol class="steps">' +
@@ -2568,7 +2586,7 @@ function viewBank() {
   var accts = (S.BankAccounts || []).slice().sort(function (a, b) { return (a.bank + a.name).localeCompare(b.bank + b.name); });
   var unmatched = accts.filter(function (a) { return !a.cardId; }).length;
   h += '<div class="tiles"><div class="tile"><div class="lbl">Last synced</div><div class="val" style="font-size:20px">' + esc(lastTxt) + '</div>' +
-    '<div class="hint">Runs on its own every morning</div></div>' +
+    '<div class="hint">Runs on its own morning and night</div></div>' +
     '<div class="tile"><div class="lbl">Added last time</div><div class="val">' + esc(added || '0') + '</div><div class="hint">New charges</div></div>' +
     '<div class="tile"><div class="lbl">Accounts going to cards</div><div class="val">' + (accts.length - unmatched) + ' of ' + accts.length + '</div><div class="hint">' +
     (unmatched ? unmatched + ' set to Don’t import' : 'All accounts are matched') + '</div></div></div>';
@@ -2827,11 +2845,11 @@ function staleBanner() {
   if (setting('bankConnected', '') !== 'yes') return '';
   var msgs = [], last = parseLastSync(setting('lastSync', ''));
   if (last && Date.now() - last > 26 * 36e5) msgs.push('The daily bank sync hasn’t run since ' + shortWhen(last) + '. Tap Sync now on Bank Sync.');
-  staleBanks().forEach(function (x) {
+  var stale = staleBanks(), banks = stale.length;
+  stale.forEach(function (x) {
     msgs.push('<b>' + esc(x.bank) + '</b> hasn’t sent anything new since ' + esc(shortWhen(x.since)) + '.');
   });
   if (!msgs.length) return '';
-  var banks = staleBanks().length;
   return '<div class="notice nudge stale"><div>⚠️ ' + msgs.join(' ') +
     (banks ? ' New charges and balances from ' + (banks > 1 ? 'these banks' : 'it') + ' are missing. Sign in at <b>beta-bridge.simplefin.org</b>, reconnect ' +
       (banks > 1 ? 'them' : 'it') + ' (the bank wants you to log in again), then tap Sync now.' : '') + '</div>' +
@@ -3323,6 +3341,14 @@ function autoScroll() {
 }
 
 /* ======================================================================= start */
+/* the top bar's height, kept in --top-h so the 1st / 15th switch on Monthly Bills can stick just under it on a phone
+   (it used to sit at a fixed 104px and slid under the bar once the bar grew) */
+(function () {
+  var bar = document.querySelector('header.top'); if (!bar) return;
+  var set = function () { document.documentElement.style.setProperty('--top-h', bar.offsetHeight + 'px'); };
+  set(); window.addEventListener('resize', set);
+  if (window.ResizeObserver) new ResizeObserver(set).observe(bar);
+})();
 function showConnect(msg) {
   document.body.classList.add('locked');
   var known = !!CONN.url && !showConnect.editLink;
