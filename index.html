@@ -243,7 +243,12 @@
     font-weight: 700; padding: 3px 8px; border-radius: 999px; opacity: 0; transition: opacity .12s; }
   .row:hover .add-note, .add-note:focus { opacity: 1; }
   .add-note:hover { color: var(--accent); background: var(--accent-soft); }
-  @media (hover: none) { .add-note { opacity: .7; } }
+  @media (hover: none) {
+    .add-note { position: static; display: block; width: max-content; max-height: 0; padding-top: 0; padding-bottom: 0; margin: 0; overflow: hidden;
+      opacity: 1; visibility: hidden; transition: max-height 0s .3s, padding 0s .3s, margin 0s .3s, visibility 0s .3s; }
+    .namecell:focus-within .add-note { max-height: 30px; padding-top: 3px; padding-bottom: 3px; margin: -2px 0 6px; visibility: visible;
+      transition-delay: 0s; }
+  }
   .yellow-sum { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; padding: 4px 10px;
     border-radius: 999px; background: #FFF3BF; color: #8F6A00; margin-bottom: 8px; }
   .yellow-sum.zero { background: var(--soft); color: var(--muted); }
@@ -568,7 +573,9 @@ function setting(id, dflt) { var s = S.Settings.filter(function (x) { return x.i
 /* ======================================================================= saving */
 var queue = [], busy = false, fails = 0;
 function status(text, err) { var el = document.getElementById('status'); el.textContent = text; el.className = err ? 'err' : ''; }
+var changeN = 0;                    // goes up with every change made on this device
 function send(ops) {
+  changeN++;
   queue = queue.concat(ops); flush();
 }
 function flush() {
@@ -592,7 +599,29 @@ window.addEventListener('beforeunload', function (e) { if (busy || queue.length)
    again, instead of waiting for a reload, which would lose them (Nov 12, 2026). Only while the app is unlocked. */
 function retrySave() { if (S && CONN.key && queue.length && !busy && !document.body.classList.contains('locked')) { fails = 0; flush(); } }
 window.addEventListener('online', retrySave);
-document.addEventListener('visibilitychange', function () { if (!document.hidden) retrySave(); });
+document.addEventListener('visibilitychange', function () { if (!document.hidden) { retrySave(); refreshOnReturn(); } });
+/* ---- refresh when you come back (Eric, Nov 12, 2026). A phone left open kept showing this morning's numbers until the
+   page was reloaded. Now, when the app comes back to the screen and what it shows is more than REFRESH_AFTER old, it quietly
+   loads the Sheet again. Only when nothing is waiting to save, no box is open and nothing is being typed; and if anything
+   is changed while the fresh copy is on its way, the fresh copy is dropped (it may not have that change yet). */
+var loadedAt = 0, refreshing = false, REFRESH_AFTER = 5 * 60000;
+function calmNow() {
+  var a = document.activeElement, tag = a && a.tagName ? a.tagName.toLowerCase() : '';
+  return !!S && !!CONN.key && !busy && !queue.length && !drag && !document.body.classList.contains('locked') &&
+    !document.getElementById('modal').classList.contains('on') && tag !== 'input' && tag !== 'textarea' && tag !== 'select';
+}
+function refreshOnReturn() {
+  if (document.hidden || refreshing || !loadedAt || Date.now() - loadedAt < REFRESH_AFTER || !calmNow()) return;
+  var n = changeN; refreshing = true;
+  api('getData').then(function (d) {
+    refreshing = false;
+    if (n !== changeN || !calmNow()) return;
+    S = d; pastCharges = null; pastChecking = null; historyLoading = false; loadedAt = Date.now();
+    prep(); render();
+    if (view === 'search') loadHistory();
+    if (!busy && !queue.length) status('Updated ' + new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }));
+  }, function (e) { refreshing = false; if (authProblem(e)) showConnect(cleanMsg(e.message)); });
+}
 
 /* ---- undo: every change remembers how to put things back. Changes made in one go (one click,
    one drag, clearing a card) are undone together. */
@@ -2614,7 +2643,7 @@ function viewBank() {
   return h;
 }
 function refreshData(note) {
-  api('getData').then(function (d) { S = d; prep(); render(); if (note) toast(note); }, function (e) { toast(esc(cleanMsg(e.message))); });
+  api('getData').then(function (d) { S = d; loadedAt = Date.now(); prep(); render(); if (note) toast(note); }, function (e) { toast(esc(cleanMsg(e.message))); });
 }
 
 function prep() {
@@ -3375,7 +3404,7 @@ function load() {
     return api('getData');
   }).then(function (data) {
     store('url', CONN.url);   // remember the link once it works (the passcode is never saved)
-    S = data; prep(); lrImportHash(); status('All changes saved'); render();
+    S = data; loadedAt = Date.now(); prep(); lrImportHash(); status('All changes saved'); render();
   }, function (err) {
     queue = pending.concat(queue);
     if (authProblem(err)) { showConnect(cleanMsg(err.message)); return; }
