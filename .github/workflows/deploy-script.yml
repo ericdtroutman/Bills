@@ -66,17 +66,58 @@ jobs:
             */s/*) DEP="$(printf '%s' "$DEP" | sed -E 's#^.*/s/([^/?]+).*$#\1#')" ;;
           esac
           cd server
+          # Keep a copy of the code Google has right now, so a bad upload can be put back (Nov 12, 2026).
+          PREV=/tmp/prev; HAVE_PREV=no
+          mkdir -p "$PREV" && cp .clasp.json "$PREV"/
+          if (cd "$PREV" && clasp pull > /tmp/pull.txt 2>&1) && ls "$PREV"/Code.* > /dev/null 2>&1 && [ -s "$PREV/appsscript.json" ]; then HAVE_PREV=yes; fi
           echo "Sending the code to Apps Script..."
           if ! clasp push --force; then
             echo "::error::Apps Script refused the upload. Check that the Apps Script API is on at script.google.com/home/usersettings."
             exit 1
           fi
           DESC="$(printf '%s' "${GITHUB_SHA::7} ${COMMIT_MSG:-manual deploy}" | head -n1 | cut -c1-90)"
-          echo "Updating the web app..."
           clasp list-deployments --json > /tmp/before.json 2>/dev/null || echo '[]' > /tmp/before.json
-          if ! clasp redeploy "$DEP" --description "$DESC"; then
-            echo "::error::The code uploaded but the web app wasn't updated. Check that DEPLOYMENT_ID is the web app link or its AKfy... id (Deploy > Manage deployments)."
+          # Before the web app moves to the new code: does the new code answer at all? A slip in the code, or a change that
+          # needs a new Google permission, would stop the whole app until Eric fixed it by hand. So a short-lived test
+          # deployment gets one empty ping (the same check as check-script.yml); any of the app's own refusals means it runs.
+          # If it doesn't answer, the old code is put back and the web app is left alone. The version made for the test is
+          # the one the web app then moves to, so this costs no extra version (Apps Script allows 200 per project).
+          ANSWERS=unknown; VER=""; RESP=""
+          TMP="$(clasp create-deployment --description "$DESC" --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);console.log((j.deploymentId||"")+" "+(j.versionNumber||""))}catch(e){console.log("")}})')"
+          TMP_ID="${TMP%% *}"; VER="${TMP#* }"; [ "$VER" = "$TMP" ] && VER=""
+          if [ -n "$TMP_ID" ]; then
+            echo "::add-mask::$TMP_ID"
+            trap 'clasp delete-deployment "$TMP_ID" >/dev/null 2>&1 || true' EXIT
+            for try in 1 2 3; do
+              sleep 6
+              RESP="$(curl -sSL --max-time 60 -H 'Content-Type: text/plain;charset=utf-8' --data '{"key":"","fn":"ping"}' "https://script.google.com/macros/s/$TMP_ID/exec" || true)"
+              case "$RESP" in
+                *'"PASSCODE:'*|*'"SETUP:'*|*'"LOCKED:'*) ANSWERS=yes; break ;;
+                *) ANSWERS=no ;;
+              esac
+            done
+            clasp delete-deployment "$TMP_ID" > /dev/null 2>&1 || echo "::warning::Couldn't remove the temporary deployment."
+            trap - EXIT
+          else
+            echo "::warning::Couldn't make a test deployment, so the new code wasn't pinged before going live."
+          fi
+          if [ "$ANSWERS" = no ]; then
+            # what Google said instead, with tags and anything id-like taken out (this repo is public)
+            SAID="$(printf '%s' "$RESP" | tr '\n' ' ' | sed -E 's/<[^>]*>/ /g; s/[A-Za-z0-9_-]{20,}/…/g' | tr -s ' ' | cut -c1-160)"
+            if [ "$HAVE_PREV" = yes ] && (cd "$PREV" && clasp push --force); then
+              echo "::error title=The new code didn't answer::The old code was put back and the web app was not changed. Google answered: $SAID"
+            else
+              echo "::error title=The new code didn't answer::The web app was not changed, but the old code could NOT be put back, so the automatic sync is running the new code. Google answered: $SAID"
+            fi
             exit 1
+          fi
+          [ "$ANSWERS" = yes ] && echo "::notice title=New code answers::Pinged before going live${VER:+ (version $VER)}."
+          echo "Updating the web app..."
+          if [ -z "$VER" ] || ! clasp redeploy "$DEP" -V "$VER" --description "$DESC"; then
+            if ! clasp redeploy "$DEP" --description "$DESC"; then
+              echo "::error::The code uploaded but the web app wasn't updated. Check that DEPLOYMENT_ID is the web app link or its AKfy... id (Deploy > Manage deployments)."
+              exit 1
+            fi
           fi
           # Google's deployment list can lag a few seconds behind the redeploy, so look again a few times
           # before deciding the version didn't move (on Oct 28 it reported "stayed on v21" while v22 was live).
