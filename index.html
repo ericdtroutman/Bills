@@ -279,6 +279,13 @@
     box-shadow: 0 0 0 1px var(--line); }
   .swatches button.on { box-shadow: 0 0 0 2px var(--c); }
   .mact { display: flex; justify-content: flex-end; gap: 8px; }
+  .cust-row { display: grid; grid-template-columns: 1fr 96px auto; gap: 8px; align-items: center; margin-bottom: 8px; font-size: 14px; }
+  .mbox .cust-row input { margin: 0; padding: 8px 10px; text-align: right; }
+  .cust-left { margin: 4px 0 14px; font-weight: 700; color: #8F5B00; font-size: 14px; }
+  .cust-left.ok { color: #2B8A3E; }
+  .notice.nudge.xmas { background: #FFE3E3; color: #A61E1E; }
+  .xline { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  .xline .sub2 { margin-top: 2px; }
   #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px); background: var(--ink);
     color: #fff; padding: 12px 18px; border-radius: 12px; font-weight: 600; opacity: 0; transition: .2s; z-index: 60;
     max-width: calc(100% - 32px); }
@@ -505,6 +512,72 @@ var WHO_COLOR = { Joint: '#E8590C', Eric: '#1C7ED6', Arianna: '#D6336C', Split: 
 /* Split = half Eric, half Arianna. "Eric + Joint" (Oct 31, 2026) = half Eric, half paid by the joint (e.g. Google One). */
 var EJ = 'Eric + Joint';
 function halfMine(who) { return who === 'Split' || who === EJ; }
+/* Custom splits and the kids' Christmas money (Eric, Nov 19, 2026). A custom split lives in the who field itself, so the sync
+   (pending → posted), History and returns carry it with no new column: "Custom|Eric=20|Joint=10|p_119=46.15".
+   Keys: Eric, Arianna, Joint, or a Christmas person's id from the People tab (p_...). A person's part is paid from the kids'
+   Christmas money in Specialty Savings (Eric moves it Specialty → joint, and it reaches his checking with the card money),
+   so it is nobody's card share and doesn't touch Joint Left. Parts that don't add up to the charge (it posted for a different
+   amount) are scaled to fit. The plain labels keep their old math exactly; custom parts are added on top. */
+var XMAS_COLOR = '#C92A2A', CUSTOM_COLOR = '#5C7CFA';
+function isCustom(who) { return String(who || '').indexOf('Custom|') === 0; }
+function parseCustom(who) {
+  var o = {};
+  String(who || '').split('|').slice(1).forEach(function (kv) {
+    var i = kv.lastIndexOf('='), n = i > 0 ? parseFloat(kv.slice(i + 1)) : NaN;
+    if (!isNaN(n)) o[kv.slice(0, i)] = (o[kv.slice(0, i)] || 0) + n;
+  });
+  return o;
+}
+function makeCustom(o) {
+  var keys = Object.keys(o).filter(function (k) { return Math.abs(+o[k] || 0) >= 0.005; });
+  return keys.length ? 'Custom|' + keys.map(function (k) { return k + '=' + plain(o[k]); }).join('|') : '';
+}
+function isPersonKey(k) { return /^p_/.test(k); }
+function hasWho(who) { return WHO.indexOf(who) >= 0 || (isCustom(who) && Object.keys(parseCustom(who)).length > 0); }
+/* how a charge is shared: {Eric, Arianna, Joint, Bills, Savings, p_...: amount}, adding up to the charge */
+function shares(c) {
+  var a = +c.amount || 0, w = c.who, o = {};
+  if (w === 'Split') { o.Eric = a / 2; o.Arianna = a / 2; }
+  else if (w === EJ) { o.Eric = a / 2; o.Joint = a / 2; }
+  else if (WHO.indexOf(w) >= 0) o[w] = a;
+  else if (isCustom(w)) {
+    var p = parseCustom(w), t = sum(Object.keys(p), function (k) { return p[k]; });
+    Object.keys(p).forEach(function (k) { o[k] = Math.abs(t - a) < 0.005 ? p[k] : t ? p[k] * a / t : 0; });
+  }
+  return o;
+}
+function shareOf(c, k) { return shares(c)[k] || 0; }
+/* Eric's card share of a charge: all of Eric, half of Split / Eric + Joint (as before), or his part of a custom split */
+function isEricsToo(c) { return c.who === 'Eric' || halfMine(c.who) || (isCustom(c.who) && Math.abs(shareOf(c, 'Eric')) >= 0.005); }
+function splitFlag(c) { return halfMine(c.who) ? true : isCustom(c.who) ? 'part' : false; }
+function ericPart(c) { return halfMine(c.who) ? c.amount / 2 : c.who === 'Eric' ? +c.amount : shareOf(c, 'Eric'); }
+function xmasPart(c) { var o = shares(c); return sum(Object.keys(o).filter(isPersonKey), function (k) { return o[k]; }); }
+/* totals of the custom-split charges only (the plain labels are added up the old way) */
+function customSums(list) {
+  var t = { Eric: 0, Arianna: 0, Joint: 0, xmas: 0, total: 0 };
+  list.forEach(function (c) {
+    if (!isCustom(c.who)) return;
+    var o = shares(c); t.total += +c.amount || 0;
+    Object.keys(o).forEach(function (k) { if (isPersonKey(k)) t.xmas += o[k]; else if (t[k] !== undefined) t[k] += o[k]; });
+  });
+  return t;
+}
+function personName(id) { var p = (S.People || []).filter(function (x) { return x.id === id; })[0]; return p ? p.name : 'Christmas'; }
+/* the short label on a charge, its color, and the long description (search, history) */
+function whoLabel(who) {
+  if (!isCustom(who)) return who || '';
+  var k = Object.keys(parseCustom(who));
+  return k.length === 1 && isPersonKey(k[0]) ? '🎄 ' + personName(k[0]) : 'Custom';
+}
+function whoColor(who) {
+  if (!isCustom(who)) return WHO_COLOR[who] || '#8F5B00';
+  return Object.keys(parseCustom(who)).every(isPersonKey) ? XMAS_COLOR : CUSTOM_COLOR;
+}
+function whoText(c) {
+  if (!isCustom(c.who)) return c.who || '';
+  var o = shares(c);
+  return Object.keys(o).map(function (k) { return (isPersonKey(k) ? '🎄 ' + personName(k) : k) + ' ' + money(o[k]); }).join(' · ');
+}
 var PALETTE = { blue: '#4C6EF5', violet: '#845EF7', green: '#37B24D', orange: '#F76707', rose: '#E64980',
                 slate: '#868E96', teal: '#1098AD', gold: '#F59F00' };
 var S = null;                       // all data
@@ -655,12 +728,14 @@ function undo() {
   toast('Undid ' + esc(g.label) + (undoStack.length ? ' <button class="toast-btn" data-act="undo">Undo more</button>' : ''), 4000);
 }
 
+var xmasSkip = false;
 function upsert(table, row) {
   var list = S[table];
   if (!list) {   // a table the page doesn't keep a copy of (History): just save it
     remember_({ op: 'remove', table: table, id: row.id });
     if (table === 'History' && pastCharges !== null) pastCharges = pastCharges.filter(function (r) { return r.id !== row.id; }).concat([row]);
     send([{ op: 'upsert', table: table, row: clone(row) }]);
+    if (table === 'History' && !xmasSkip && Math.abs(xmasPart(row)) >= 0.005) noteXmas(row);   // the page keeps no History, so Christmas keeps its own record
     return;
   }
   var i = -1;
@@ -696,9 +771,10 @@ function removeWhere(table, field, value) {
 function pendingMath() {
   var P = (S.Pending || []).filter(function (p) { return !p.hold; }), by = {};   // pending charges on hold belong to the next check (Nov 6, 2026)
   WHO.forEach(function (w) { by[w] = sum(P.filter(function (p) { return p.who === w; }), function (p) { return p.amount; }); });
+  var cu = customSums(P);
   return { all: sum(P, function (p) { return p.amount; }), n: P.length,
-           eric: by.Eric + by.Split / 2 + by[EJ] / 2, arianna: by.Arianna + by.Split / 2, joint: by.Joint + by[EJ] / 2,
-           unlabeled: P.filter(function (p) { return WHO.indexOf(p.who) < 0; }).length };
+           eric: by.Eric + by.Split / 2 + by[EJ] / 2 + cu.Eric, arianna: by.Arianna + by.Split / 2 + cu.Arianna, joint: by.Joint + by[EJ] / 2 + cu.Joint,
+           xmas: cu.xmas, unlabeled: P.filter(function (p) { return !hasWho(p.who); }).length };
 }
 /* ---- returns: a charge marked Returning stays on its card but counts nowhere until its refund comes in (Eric, Oct 31, 2026).
    ret holds the date it was marked, plus "|no=id,id" for refunds Eric said aren't its refund. */
@@ -732,7 +808,8 @@ function calc() {
   var live = S.Charges.filter(counts);     // charges on hold or being returned don't count anywhere
   WHO.forEach(function (w) { tag[w] = sum(live.filter(function (c) { return c.who === w; }), function (c) { return c.amount; }); });
   var onCards = sum(live, function (c) { return c.amount; });
-  var tagged = sum(WHO, function (w) { return tag[w]; });
+  var cu = customSums(live);
+  var tagged = sum(WHO, function (w) { return tag[w]; }) + cu.total;
   var pot = jointPot(), inJoint = pot.total;
   var b1 = S.Bills.filter(function (b) { return b.payOn === '1st'; });
   var b15 = S.Bills.filter(function (b) { return b.payOn === '15th'; });
@@ -746,16 +823,16 @@ function calc() {
      Spent = joint charges on the cards (+ half of Eric + Joint) + debit spending from joint checking + out of pocket.
      The joint checking balance is shown as a check only; it holds bill money too, so it isn't part of Left.
      (Nov 8 – Nov 10 Left came from the bank balance minus guessed bills; that guess ran $342 high on Nov 10.) */
-  var jointLeft = r2(inJoint - tag.Joint - tag[EJ] / 2 - cash - jb.spend), bankJoint = null;
+  var jointLeft = r2(inJoint - tag.Joint - tag[EJ] / 2 - cu.Joint - cash - jb.spend), bankJoint = null;
   var acct = jointAcct();
   if (acct) bankJoint = { balance: +acct.balance || 0 };
   return {
     tag: tag, onCards: onCards, untagged: Math.round((onCards - tagged) * 100) / 100,
-    needN: live.filter(function (c) { return WHO.indexOf(c.who) < 0; }).length,
+    needN: live.filter(function (c) { return !hasWho(c.who); }).length, cu: cu,
     held: S.Charges.filter(function (c) { return c.hold && !c.ret; }),
     returning: S.Charges.filter(function (c) { return c.ret; }),
     pend: pendingMath(),
-    eric: tag.Eric + tag.Split / 2 + tag[EJ] / 2, arianna: tag.Arianna + tag.Split / 2, jointCards: tag.Joint + tag[EJ] / 2,
+    eric: tag.Eric + tag.Split / 2 + tag[EJ] / 2 + cu.Eric, arianna: tag.Arianna + tag.Split / 2 + cu.Arianna, jointCards: tag.Joint + tag[EJ] / 2 + cu.Joint,
     inJoint: inJoint, pot: pot, cash: cash, bankJoint: bankJoint,
     jointBank: jb, jointLeft: jointLeft,
     us1: us1, us15: us15, tot1: sum(b1, function (b) { return b.total; }), tot15: sum(b15, function (b) { return b.total; }),
@@ -782,10 +859,18 @@ function textCell(table, id, field, value, ph, cls) {
   return '<input class="cell' + (cls ? ' ' + cls : '') + '" data-t="' + table + '" data-id="' + id + '" data-f="' + field + '" value="' + esc(value) +
     '" placeholder="' + esc(ph || '') + '">';
 }
+/* the kids' Christmas chips show from Oct 15 to Jan 31 (or on a charge that already has one) */
+function xmasSeasonOn() { var md = today().slice(5); return md >= '10-15' || md <= '01-31'; }
 function whoSelect(c, table) {
-  return '<select class="who' + (c.who ? '' : ' blank') + '" style="--w:' + (WHO_COLOR[c.who] || '#8F5B00') + '" data-t="' + (table || 'Charges') + '" data-id="' + esc(c.id) + '" data-f="who">' +
+  var cust = isCustom(c.who);
+  var kids = xmasSeasonOn() || (cust && Object.keys(parseCustom(c.who)).some(isPersonKey)) ? (S.People || []).slice().sort(byOrder) : [];
+  return '<select class="who' + (c.who ? '' : ' blank') + '" style="--w:' + whoColor(c.who) + '" data-t="' + (table || 'Charges') + '" data-id="' + esc(c.id) + '" data-f="who"' +
+    (cust ? ' title="' + esc(whoText(c)) + '"' : '') + '>' +
     (c.who ? '' : '<option value="" selected>Who?</option>') +
-    WHO.map(function (w) { return '<option' + (w === c.who ? ' selected' : '') + '>' + w + '</option>'; }).join('') + '</select>';
+    (cust ? '<option value="' + esc(c.who) + '" selected>' + esc(whoLabel(c.who)) + '</option>' : '') +
+    WHO.map(function (w) { return '<option' + (w === c.who ? ' selected' : '') + '>' + w + '</option>'; }).join('') +
+    kids.map(function (p) { return '<option value="xmas:' + esc(p.id) + '">🎄 ' + esc(p.name) + '’s Christmas</option>'; }).join('') +
+    '<option value="__custom">' + (cust ? 'Change the split…' : 'Custom…') + '</option></select>';
 }
 function shortDate(d) {
   if (!d) return '';
@@ -834,12 +919,15 @@ function copyText(text) {
 function ariannaReport() {
   var rows = [];
   var add = function (c, pending) {
-    var full = +c.amount || 0, mine = c.who === 'Split' ? full / 2 : full;
+    var full = +c.amount || 0, mine = c.who === 'Split' ? full / 2 : c.who === 'Arianna' ? full : shareOf(c, 'Arianna');
     var card = find('Cards', c.cardId);
-    rows.push({ date: c.date || '', item: String(c.item || ''), card: card ? card.name : '', full: full, mine: r2(mine), split: c.who === 'Split', pending: pending });
+    rows.push({ date: c.date || '', item: String(c.item || ''), card: card ? card.name : '', full: full, mine: r2(mine), split: c.who !== 'Arianna', half: c.who === 'Split', pending: pending });
   };
-  S.Charges.filter(function (c) { return counts(c) && (c.who === 'Arianna' || c.who === 'Split'); }).forEach(function (c) { add(c, false); });
-  (S.Pending || []).filter(function (p) { return !p.hold && (p.who === 'Arianna' || p.who === 'Split'); }).forEach(function (p) { add(p, true); });
+  var hers = function (c) { return c.who === 'Arianna' || c.who === 'Split' || (isCustom(c.who) && Math.abs(shareOf(c, 'Arianna')) >= 0.005); };
+  S.Charges.filter(function (c) { return counts(c) && hers(c); }).forEach(function (c) { add(c, false); });
+  (S.Pending || []).filter(function (p) { return !p.hold && hers(p); }).forEach(function (p) { add(p, true); });
+  // the kids' Christmas gifts on the cards: not in her share (paid from the Christmas money), listed so she can see why
+  var xm = S.Charges.filter(counts).concat((S.Pending || []).filter(function (p) { return !p.hold; })).filter(function (c) { return Math.abs(xmasPart(c)) >= 0.005; });
   rows.sort(function (a, b) { return String(a.date).localeCompare(String(b.date)) || a.item.localeCompare(b.item); });
   var total = r2(sum(rows, function (r) { return r.mine; }));
   var own = r2(sum(rows.filter(function (r) { return !r.split; }), function (r) { return r.mine; }));
@@ -858,7 +946,8 @@ function ariannaReport() {
     .sort(function (a, b) { return b.total - a.total; });
   var dated = rows.filter(function (r) { return r.date; });
   return { rows: rows, total: total, own: own, split: r2(total - own), pending: r2(sum(rows.filter(function (r) { return r.pending; }), function (r) { return r.mine; })),
-           top: top, pie: pie, from: dated.length ? dated[0].date : '', to: dated.length ? dated[dated.length - 1].date : '' };
+           top: top, pie: pie, from: dated.length ? dated[0].date : '', to: dated.length ? dated[dated.length - 1].date : '',
+           xmas: r2(sum(xm, xmasPart)), xmasN: xm.length };
 }
 var JSPDF_URL = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
 function loadJsPdf() {
@@ -902,7 +991,7 @@ function ariannaPdf() {
     doc.setFont('helvetica', 'bold'); doc.setFontSize(12); setC(accent); doc.text('Her share of the cards', M + 16, y + 22);
     doc.setFontSize(26); setC(ink); doc.text(money(R.total), W - M - 16, y + 30, { align: 'right' });
     doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5); setC(muted);
-    doc.text(pdfText('Her own charges ' + money(R.own) + ' + her half of shared (Split) charges ' + money(R.split) + (R.pending ? ' · includes ' + money(R.pending) + ' still pending' : '')), M + 16, y + 48);
+    doc.text(pdfText('Her own charges ' + money(R.own) + (R.rows.some(function (r) { return r.split && !r.half; }) ? ' + her part of shared charges ' : ' + her half of shared (Split) charges ') + money(R.split) + (R.pending ? ' · includes ' + money(R.pending) + ' still pending' : '')), M + 16, y + 48);
     y += 92;
     // pie + legend
     var slices = R.pie.map(function (s, i) { return { name: s.name, total: s.total, color: TYPE_COLOR[s.name] || PIE_COLORS[i % PIE_COLORS.length] }; });
@@ -941,7 +1030,7 @@ function ariannaPdf() {
       doc.text(name, M + 62, y);
       doc.setFontSize(10); setC(muted); doc.text(pdfText(r.card), M + 300, y);
       doc.setFont('helvetica', 'bold'); doc.setFontSize(11); setC(ink); doc.text(money(r.mine), W - M, y, { align: 'right' });
-      var note = (r.split ? 'Shared: half of ' + money(r.full) : '') + (r.pending ? (r.split ? ' · ' : '') + 'pending' : '');
+      var note = (r.split ? (r.half ? 'Shared: half of ' : 'Shared: her part of ') + money(r.full) : '') + (r.pending ? (r.split ? ' · ' : '') + 'pending' : '');
       if (note) { y += 13; doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); setC(muted); doc.text(pdfText(note), M + 62, y); }
       doc.setDrawColor(line[0], line[1], line[2]); doc.line(M, y + 7, W - M, y + 7);
     });
@@ -949,6 +1038,7 @@ function ariannaPdf() {
     doc.setFont('helvetica', 'bold'); doc.setFontSize(12); setC(ink); doc.text('Total', M, y); doc.text(money(R.total), W - M, y, { align: 'right' });
     y += 20; doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); setC(muted);
     doc.text('Charges on hold for next pay period and returns waiting for a refund are not included.', M, y);
+    if (R.xmas) { y += 14; doc.text(pdfText('Not in her share: ' + money(R.xmas) + ' of the kids\' Christmas gifts (' + R.xmasN + (R.xmasN === 1 ? ' charge' : ' charges') + '), paid from the Christmas money in savings.'), M, y); }
     var fname = 'Arianna spending ' + (R.to ? longDate(R.to) : longDate(today())).replace(/,/g, '') + '.pdf';
     var blob = doc.output('blob'), file = null;
     try { file = new File([blob], fname, { type: 'application/pdf' }); } catch (e) {}
@@ -981,6 +1071,7 @@ function viewCards(m) {
   h += '<div style="margin:-4px 0 14px"><button class="btn small" data-act="ariannapdf" title="A PDF of her charges and her half of Split, ready to send her">Send Arianna her summary (PDF)</button></div>';
 
   h += payNudge(cards);
+  h += xmasNudge();
   h += cardCheckNudge(cards);
   h += sinceNudge(m);
   h += '<div class="pills">';
@@ -1022,6 +1113,9 @@ function viewCards(m) {
     var t = sum(liveItems.filter(function (x) { return x.who === w; }), function (x) { return x.amount; });
     return t ? '<span class="bk" style="color:' + WHO_COLOR[w] + '">' + w + ' <b>' + money(t) + '</b></span>' : '';
   }).join('');
+  var cuCard = customSums(liveItems), cuRest = r2(cuCard.total - cuCard.xmas);
+  if (Math.abs(cuRest) >= 0.005) parts += '<span class="bk" style="color:' + CUSTOM_COLOR + '">Custom <b>' + money(cuRest) + '</b></span>';
+  if (Math.abs(cuCard.xmas) >= 0.005) parts += '<span class="bk" style="color:' + XMAS_COLOR + '">🎄 Christmas <b>' + money(cuCard.xmas) + '</b></span>';
   var needN = liveItems.filter(function (x) { return !x.who; }).length;
   if (needN) parts = '<span class="bk warn">' + needN + (needN === 1 ? ' needs' : ' need') + ' a person <b>' + money(sum(liveItems.filter(function (x) { return !x.who; }), function (x) { return x.amount; })) + '</b></span>' + parts;
   if (heldItems.length) parts += '<span class="bk hold">On hold (not counted) <b>' + money(heldTotal) + '</b></span>';
@@ -1056,7 +1150,7 @@ function viewCards(m) {
   var paidP = paidPendingShown.filter(function (e) { return e.cardId === card.id; });
   if (paidP.length) {
     h += '<div class="pend-head"><b>Paid while pending · ' + money(sum(paidP, function (e) { return e.amount; })) + '</b><span>Already paid with the card. Not counted for anyone; when they post they’re filed away on their own.</span></div><div class="rows pend">' +
-      paidP.map(function (e) { return '<div class="row g-ro"><div style="opacity:.6">' + esc(e.item) + ' <span class="pchip">paid</span><div class="sub2">' + (e.date ? shortDate(e.date) + ' · ' : '') + esc(e.who || 'no label') + '</div></div>' +
+      paidP.map(function (e) { return '<div class="row g-ro"><div style="opacity:.6">' + esc(e.item) + ' <span class="pchip">paid</span><div class="sub2">' + (e.date ? shortDate(e.date) + ' · ' : '') + esc(whoLabel(e.who) || 'no label') + '</div></div>' +
         '<div class="r" style="display:flex;gap:8px;align-items:center;justify-content:flex-end"><span class="num" style="opacity:.6">' + money(e.amount) + '</span><button class="btn small" style="white-space:nowrap" data-act="pendunpaid" data-id="' + esc(e.bankId) + '" title="Not paid yet: count it again">Not paid</button></div></div>'; }).join('') + '</div>';
   }
   var refundOf = {};     // refund id -> the return it may belong to
@@ -1083,7 +1177,7 @@ function viewCards(m) {
       }
       h += '<div class="row" data-charge="' + esc(x.id) + '"><div class="ret-line"><div><b>' + esc(x.item) + '</b> <span class="rchip' + (late ? ' late' : '') + '">' +
         (late ? 'No refund after 30 days' : 'Returning') + '</span><div class="sub2">' + (x.date ? shortDate(x.date) + ' · ' : '') + 'marked ' + shortDate(retDate(x)) +
-        (x.who ? ' · ' + esc(x.who) : '') + '<button class="ret-btn" data-act="retclose" data-id="' + esc(x.id) + '">Close this return</button></div></div>' +
+        (x.who ? ' · ' + esc(whoLabel(x.who)) : '') + '<button class="ret-btn" data-act="retclose" data-id="' + esc(x.id) + '">Close this return</button></div></div>' +
         '<div class="num" style="color:var(--muted)">' + money(x.amount) + '</div></div>' + hint + '</div>';
     });
     h += '</div>';
@@ -1141,12 +1235,12 @@ function payPendingOff(cardId, onlyIds) {
   if (pp.length) setSetting('paidPending', JSON.stringify(list));
   // your share of a pending charge the card payment covered is still owed to the joint until your card transfer pays it
   // (Nov 10, 2026: it used to drop out of My Money as soon as it was marked paid)
-  var mineP = pp.filter(function (x) { return x.who === 'Eric' || halfMine(x.who); });
+  var mineP = pp.filter(isEricsToo);
   if (mineP.length && ((S.Checking || []).length || setting('cardLedger', null) !== null)) {
     var led = ledger(), inLed = {}; led.forEach(function (e) { if (e.bankId) inLed[e.bankId] = 1; });
     mineP.forEach(function (x) { if (inLed[x.bankId]) return;
       led.push({ id: uid('lg'), src: 'cleared', cardId: cardId, bankId: x.bankId, item: x.item, date: x.date || '', full: +x.amount,
-                 mine: halfMine(x.who) ? x.amount / 2 : +x.amount, split: halfMine(x.who), cover: '', pid: '', on: today() }); });
+                 mine: ericPart(x), split: splitFlag(x), cover: '', pid: '', on: today() }); });
     saveLedger(led);
   }
   settlePaidPending();
@@ -1249,7 +1343,7 @@ function sinceNudge(m) {
 function viewJoint(m) {
   var jb = m.jointBank, acct = jointAcct(), pot = m.pot, left = m.jointLeft, pend = r2(m.pend.joint || 0), after = r2(left - pend);
   var spent = r2(m.jointCards + m.cash + jb.spend), short = after < -0.004;
-  var nCards = S.Charges.filter(function (c) { return (c.who === 'Joint' || c.who === EJ) && counts(c); }).length;
+  var nCards = S.Charges.filter(function (c) { return (c.who === 'Joint' || c.who === EJ || (isCustom(c.who) && Math.abs(shareOf(c, 'Joint')) >= 0.005)) && counts(c); }).length;
   var h = '<h1>Joint Account</h1><p class="sub">Your spending money for this pay period: groceries and the extra from Monthly Bills, plus anything you add. Left is what’s still there to spend.</p>';
   h += '<section class="panel jhero' + (short ? ' short' : '') + '"><div class="eyebrow">Left to spend</div>' +
     '<div class="jh-val num' + (left < -0.004 ? ' neg' : '') + '">' + money(left) + '</div><div class="jh-sub">' + money(m.inJoint) + ' spending money − ' + money(spent) + ' spent' +
@@ -1270,7 +1364,7 @@ function viewJoint(m) {
     '<input class="f-amt num" name="amount" placeholder="0.00" inputmode="decimal" autocomplete="off"><button class="btn primary">Add</button></form>';
   h += '<div class="fline top"><div><b>Spent</b></div><div class="num neg-out">− ' + money(spent) + '</div></div>';
   h += '<div class="fline"><div>Joint charges on the cards<div class="sub2">' + nCards + ' charge' + (nCards === 1 ? '' : 's') + ', listed below' +
-    (m.tag[EJ] ? ' (Eric + Joint counts half)' : '') + '</div></div><div class="num neg-out">− ' + money(m.jointCards) + '</div></div>';
+    (m.tag[EJ] ? ' (Eric + Joint counts half)' : '') + (m.cu && Math.abs(m.cu.Joint) >= 0.005 ? ' (custom splits count the joint’s part)' : '') + '</div></div><div class="num neg-out">− ' + money(m.jointCards) + '</div></div>';
   if (acct) h += '<div class="fline"><div>Debit from joint checking<div class="sub2">Groceries or other spending paid straight from the joint' + (jb.since ? ', since ' + shortDate(jb.since) : '') +
     (jb.ask ? '. <b style="color:#8F5B00">' + jb.ask + ' line' + (jb.ask === 1 ? ' needs' : 's need') + ' an answer below</b>' : '') + '</div></div><div class="num neg-out">− ' + money(jb.spend) + '</div></div>';
   h += '<div class="fline"><div>Paid out of pocket</div><div class="num neg-out">− ' + money(m.cash) + '</div></div>';
@@ -1294,17 +1388,19 @@ function viewJoint(m) {
     '<button class="btn small" data-act="clearcash">Clear out-of-pocket</button></div>' : '') + '</section>';
 
   var cards = {}; S.Cards.forEach(function (c) { cards[c.id] = c; });
-  var jc = S.Charges.filter(function (c) { return c.who === 'Joint' && counts(c); }).sort(newestFirst);
-  var jp = (S.Pending || []).filter(function (p) { return p.who === 'Joint'; });
+  var jointPart = function (c) { return isCustom(c.who) && Math.abs(shareOf(c, 'Joint')) >= 0.005; };
+  var jc = S.Charges.filter(function (c) { return (c.who === 'Joint' || jointPart(c)) && counts(c); }).sort(newestFirst);
+  var jp = (S.Pending || []).filter(function (p) { return p.who === 'Joint' || (jointPart(p) && !p.hold); });
   var line = function (c, pending) {
     var card = cards[c.cardId] || { name: '?', color: 'slate' };
     return '<div class="row g-ro"' + (pending ? ' style="background:#FAFBFC"' : '') + '><div><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + col(card.color) +
       ';margin-right:8px"></span>' + (pending ? '<i>' + esc(c.item) + '</i><span class="pchip">pending</span>' : esc(c.item)) +
       ' <span style="color:var(--muted);font-size:12px">· ' + esc(card.name) + (c.date ? ' · ' + shortDate(c.date) : '') + '</span></div>' +
-      '<div class="r num' + (c.amount < 0 ? ' neg-txt' : '') + '"' + (pending ? ' style="color:var(--muted)"' : '') + '>' + money(c.amount) + '</div></div>';
+      '<div class="r num' + (c.amount < 0 ? ' neg-txt' : '') + '"' + (pending ? ' style="color:var(--muted)"' : '') + '>' + money(isCustom(c.who) ? shareOf(c, 'Joint') : c.amount) +
+      (isCustom(c.who) ? '<div class="sub2">joint’s part of ' + money(c.amount) + '</div>' : '') + '</div></div>';
   };
   h += '<section class="panel" style="--c:#868E96"><div class="phead"><div class="grow"><div class="eyebrow">Money out</div>' +
-    '<div style="font-size:20px;font-weight:800">Joint charges on cards</div></div><div class="big num">' + money(m.tag.Joint) +
+    '<div style="font-size:20px;font-weight:800">Joint charges on cards</div></div><div class="big num">' + money(m.tag.Joint + (m.cu ? m.cu.Joint : 0)) +
     (jp.length ? '<small>+ ' + money(m.pend.joint) + ' pending</small>' : '') + '</div></div><div class="rows">';
   h += (jp.length || jc.length) ? jp.map(function (c) { return line(c, true); }).join('') + jc.map(function (c) { return line(c, false); }).join('')
     : '<div class="empty">No joint charges.</div>';
@@ -1647,25 +1743,85 @@ function viewSavings() {
   return h;
 }
 
+/* ---- the kids' Christmas money (Eric, Nov 19, 2026). Card charges labeled for a kid (all of one, or part with Custom…)
+   count toward that kid's budget here and are paid from the Christmas fund in Specialty Savings: Eric moves the money
+   Specialty → joint, and it reaches him with the card money. "Moved it" logs the move in the fund as an entry whose id starts
+   with fm_, so the fund (and the Specialty check on Savings) go down only when the money really leaves.
+   Cleared charges go to History, which the page doesn't keep, so their Christmas parts are kept in the xmasDone setting.
+   A season runs Feb 1 – Jan 31, so January returns still count for that Christmas. */
+function xmasSeason() { var t = today(), y = +t.slice(0, 4); if (t.slice(5, 7) === '01') y--; return { from: y + '-02-01', to: (y + 1) + '-01-31' }; }
+function xmasFund() { return S.Funds.filter(function (f) { return /christmas/i.test(f.name); }).sort(byOrder)[0] || null; }
+function xmasDone() { try { var v = JSON.parse(setting('xmasDone', '') || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
+function noteXmas(row) {
+  var cut = addDays(today(), -400);
+  var list = xmasDone().filter(function (e) { return e.id !== row.id && (!e.date || e.date >= cut); });
+  list.push({ id: row.id, item: row.item, amount: +row.amount || 0, who: row.who, date: row.date || '', cardId: row.cardId || '' });
+  setSetting('xmasDone', JSON.stringify(list));
+}
+function xmasLines() {
+  var s = xmasSeason(), out = [], seen = {};
+  var add = function (c, how) {
+    if (seen[c.id] || (c.date && (c.date < s.from || c.date > s.to))) return;
+    var o = shares(c), ks = Object.keys(o).filter(isPersonKey); if (!ks.length) return;
+    seen[c.id] = 1;
+    ks.forEach(function (k) { out.push({ id: c.id, person: k, item: c.item, date: c.date || '', amount: o[k], full: +c.amount || 0, cardId: c.cardId, how: how, part: Object.keys(o).length > 1 }); });
+  };
+  S.Charges.forEach(function (c) { if (counts(c)) add(c, 'posted'); });
+  (S.Pending || []).forEach(function (p) { if (!p.hold) add(p, 'pending'); });
+  paidPendingShown.forEach(function (e) { add({ id: 'pp_' + e.bankId, item: e.item, amount: e.amount, who: e.who, date: e.date, cardId: e.cardId }, 'pending'); });
+  xmasDone().forEach(function (e) { add(e, 'paid'); });
+  return out;
+}
+function xmasMoney() {
+  var s = xmasSeason(), f = xmasFund(), lines = xmasLines();
+  var spent = r2(sum(lines, function (l) { return l.amount; }));
+  var moved = f ? r2(-sum(S.FundEntries.filter(function (e) { return e.fundId === f.id && /^fm_/.test(e.id) && (!e.date || (e.date >= s.from && e.date <= s.to)); }), function (e) { return e.amount; })) : 0;
+  return { fund: f, lines: lines, spent: spent, moved: moved, toMove: r2(spent - moved), inFund: f ? r2(fundBal(f)) : 0 };
+}
+/* the reminder (Cards and Christmas pages): move what the kids' gifts on the cards cost from Specialty to the joint */
+function xmasNudge() {
+  var x = xmasMoney(); if (!x.fund || Math.abs(x.toMove) < 0.01) return '';
+  if (x.toMove < 0) return '<div class="notice nudge xmas"><span>🎄 ' + money(-x.toMove) + ' more was moved for Christmas than the kids’ gifts on the cards add up to now (a return?). It can go back to Specialty Savings.</span>' +
+    '<span><button class="btn small" data-act="xmasmoved" data-v="' + x.toMove + '">Moved it back</button></span></div>';
+  var can = r2(Math.min(x.toMove, Math.max(0, x.inFund))), nx = nextExtraPay();
+  var short = x.toMove - can >= 0.01 ? ' Only ' + money(Math.max(0, x.inFund)) + ' is in ' + esc(x.fund.name) + ' now' +
+    (nx ? '; the rest can move after the ' + shortDate(nx.date) + ' extra check brings more Christmas money.' : '.') : '';
+  return '<div class="notice nudge xmas"><span>🎄 Move <b>' + money(x.toMove) + '</b> from Specialty Savings to the joint for the kids’ Christmas charges, before the card money goes to you.' + short + '</span>' +
+    '<span>' + (can >= 0.01 ? '<button class="btn small primary" data-act="xmasmoved" data-v="' + can + '">Moved ' + money(can) + '</button> ' : '') +
+    (view === 'christmas' ? '' : '<button class="btn small" data-act="nav" data-v="christmas">See them</button>') + '</span></div>';
+}
 function viewChristmas() {
   var people = S.People.slice().sort(byOrder);
   var budget = parseAmt(setting('christmasBudget', '0')) || 0;
-  var spent = sum(S.Gifts, function (g) { return g.amount; });
+  var X = xmasMoney(), cardsById = {}; S.Cards.forEach(function (c) { cardsById[c.id] = c; });
+  var onCards = function (pid) { return X.lines.filter(function (l) { return l.person === pid; }); };
+  var spent = sum(S.Gifts, function (g) { return g.amount; }) + X.spent;
   var perPerson = sum(people, function (p) { return p.budget; });
-  var h = '<h1>Christmas</h1><p class="sub">Each person’s budget, what’s been spent, and what’s left.</p>';
+  var h = '<h1>Christmas</h1><p class="sub">Each person’s budget, what’s been spent, and what’s left. On the Cards page, pick 🎄 and a name for a gift (or Custom… for part of a charge) and it shows up here.</p>';
+  h += xmasNudge();
+  if (X.fund) h += '<p class="sub">' + esc(X.fund.name) + ' in Specialty Savings: <b>' + money(X.inFund) + '</b> · gifts on the cards ' + money(X.spent) + ' · moved to the joint ' + money(X.moved) + '</p>';
+  else if (X.spent) h += '<p class="sub">Add a fund with “Christmas” in its name on the Savings page to track moving this money from Specialty Savings.</p>';
   h += '<div class="tiles"><div class="tile"><div class="lbl">Overall budget</div><div class="amt" style="justify-content:flex-start">' +
     '<span style="font-size:24px;font-weight:800">$</span><input class="cell num val" style="font-size:24px;font-weight:800;width:140px;text-align:left" inputmode="decimal" data-t="Settings" data-id="christmasBudget" data-f="value" value="' + plain(budget) + '"></div>' +
     '<div class="hint' + (perPerson > budget ? ' warn' : '') + '">Person budgets add up to ' + money(perPerson) + '</div></div>' +
     tile('Spent so far', spent) + tile('Left', budget - spent, { sign: true }) + '</div><div class="grid">';
   people.forEach(function (p) {
     var gs = S.Gifts.filter(function (g) { return g.personId === p.id; }).sort(byOrder);
-    var sp = sum(gs, function (g) { return g.amount; }), left = p.budget - sp;
+    var cl = onCards(p.id).sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
+    var sp = sum(gs, function (g) { return g.amount; }) + sum(cl, function (l) { return l.amount; }), left = p.budget - sp;
     var pct = p.budget ? Math.min(100, Math.max(0, sp / p.budget * 100)) : (sp ? 100 : 0);
     h += '<section class="panel" style="--c:#E03131"><div class="phead"><div class="grow"><div class="eyebrow">Gifts for</div>' +
       textCell('People', p.id, 'name', p.name, '', 'title-in') +
       '<div class="mini"><div>Budget<b>' + '<span class="amt" style="justify-content:flex-start;display:inline-flex"><span>$</span><input class="cell num" style="width:70px;text-align:left;font-weight:700;padding:0 2px;margin:0" inputmode="decimal" data-t="People" data-id="' + p.id + '" data-f="budget" value="' + plain(p.budget) + '"></span></b></div>' +
       '<div>Spent<b class="num">' + money(sp) + '</b></div><div>Left<b class="num' + (left < 0 ? ' neg-txt' : '') + '">' + money(left) + '</b></div></div>' +
       '<div class="bar' + (left < 0 ? ' over' : '') + '"><i style="width:' + pct + '%"></i></div></div></div>';
+    if (left < -0.004 && cl.length) h += '<div class="notice nudge" style="margin:8px 0 0">' + esc(p.name) + ' is ' + money(-left) + ' over. It still comes out of the Christmas money unless you change a charge to Custom… and give part to someone else.</div>';
+    h += cl.map(function (l) {
+      var k = cardsById[l.cardId];
+      return '<div class="xline"><div>' + esc(l.item) + (l.how === 'pending' ? ' <span class="pchip">pending</span>' : '') +
+        '<div class="sub2">' + (l.date ? shortDate(l.date) + ' · ' : '') + esc(k ? k.name : 'Card') + (l.part ? ' · part of ' + money(l.full) : '') + (l.how === 'paid' ? ' · card paid' : '') + '</div></div>' +
+        '<div class="num' + (l.amount < 0 ? ' neg-txt' : '') + '">' + money(l.amount) + '</div></div>';
+    }).join('');
     h += '<div class="rows">' + gs.map(function (g) {
       return '<div class="row g-two">' + textCell('Gifts', g.id, 'item', g.item) + amtCell('Gifts', g.id, 'amount', g.amount) +
         '<button class="x" data-act="del" data-t="Gifts" data-id="' + g.id + '">×</button></div>';
@@ -1716,7 +1872,7 @@ function viewSearch() {
       h += '<div class="row g-res"' + (x.isCash ? ' data-act="nav" data-v="joint"' : ' data-act="goto" data-id="' + x.id + '" data-card="' + x.cardId + '"') + ' title="Open">' +
         '<div><div>' + hl(x.item, q) + (x.isPending ? '<span class="pchip">pending</span>' : '') + (x.hold ? '<span class="hchip">on hold</span>' : '') + (x.ret ? '<span class="rchip">returning</span>' : '') + '</div><div class="sub2">' + (x.date ? shortDate(x.date) + ' · ' : '') + '<span class="c-card-m">' + (x.cardId === 'cash' ? 'Out of pocket' : (find('Cards', x.cardId) || { name: 'Deleted card' }).name.replace(/[<>&]/g, '')) + '</span></div></div>' +
         '<div class="c-card2">' + cardTag(x.cardId) + '</div>' +
-        '<div class="c-who">' + (x.who ? '<span style="color:' + WHO_COLOR[x.who] + ';font-weight:700;font-size:12.5px">' + esc(x.who) + '</span>' : '<span class="badge warn">Who?</span>') + '</div>' +
+        '<div class="c-who">' + (x.who ? '<span style="color:' + whoColor(x.who) + ';font-weight:700;font-size:12.5px"' + (isCustom(x.who) ? ' title="' + esc(whoText(x)) + '"' : '') + '>' + esc(whoLabel(x.who)) + '</span>' : '<span class="badge warn">Who?</span>') + '</div>' +
         '<div class="r num' + (x.amount < 0 ? ' neg-txt' : '') + '">' + money(x.amount) + '</div></div>';
     });
     h += '</div>';
@@ -1751,7 +1907,7 @@ function viewSearch() {
     past.slice(0, 200).forEach(function (x) {
       h += '<div class="row g-res past"><div><div>' + hl(x.item, q) + '</div><div class="sub2">' + (x.date ? shortDate(x.date) + ' · ' : '') +
         'cleared ' + shortDate(x.clearedOn) + '</div></div><div class="c-card2">' + cardTag(x.cardId) + '</div>' +
-        '<div class="c-who" style="font-size:12.5px;font-weight:700;color:' + (WHO_COLOR[x.who] || 'var(--muted)') + '">' + esc(x.who || '—') + '</div>' +
+        '<div class="c-who" style="font-size:12.5px;font-weight:700;color:' + (x.who ? whoColor(x.who) : 'var(--muted)') + '"' + (isCustom(x.who) ? ' title="' + esc(whoText(x)) + '"' : '') + '>' + esc(whoLabel(x.who) || '—') + '</div>' +
         '<div class="r num">' + money(x.amount) + '</div></div>';
     });
     h += '</div>';
@@ -1954,8 +2110,7 @@ function moneyMath(m) {
   if (two) open.forEach(function (r) { if (r.kind === 'cards' && potOfRow(r) === 'old' && String(r.date) > lastT) lastT = String(r.date); });
 
   // ---- your card charges (Eric + half of Split / Eric + Joint), posted, pending, and remembered
-  var mine = function (c) { return c.who === 'Eric' || halfMine(c.who); };
-  var share = function (c) { return halfMine(c.who) ? c.amount / 2 : +c.amount; };
+  var mine = isEricsToo, share = ericPart;
   var livePend = {}; (S.Pending || []).forEach(function (p) { livePend[p.bankId] = true; });
   var ledByBank = {}; led.forEach(function (e) { if (e.bankId) ledByBank[e.bankId] = e; });
   var used = {}, dupes = [], dupeOf = {}, lines = [];
@@ -1972,17 +2127,17 @@ function moneyMath(m) {
         }
       }
     }
-    lines.push({ id: c.id, src: 'charge', name: c.item, date: c.date || '', amount: share(c), full: +c.amount, split: halfMine(c.who),
+    lines.push({ id: c.id, src: 'charge', name: c.item, date: c.date || '', amount: share(c), full: +c.amount, split: splitFlag(c),
                  from: cardName(c.cardId), cardId: c.cardId, hold: !!c.hold, cover: st ? st.slice(3) : '', pending: false });
   });
   (S.Pending || []).forEach(function (p) {
     if (!mine(p) || ledByBank[p.bankId]) return;
-    lines.push({ id: p.id, src: 'pending', name: p.item, date: p.date || '', amount: share(p), full: +p.amount, split: halfMine(p.who),
+    lines.push({ id: p.id, src: 'pending', name: p.item, date: p.date || '', amount: share(p), full: +p.amount, split: splitFlag(p),
                  from: cardName(p.cardId), cardId: p.cardId, bankId: p.bankId, hold: !!p.hold, cover: '', pending: true });
   });
   led.forEach(function (e) {
     if (e.pid) return;
-    lines.push({ id: e.id, src: 'ledger', name: e.item, date: e.date || '', amount: +e.mine, full: +e.full, split: !!e.split, from: cardName(e.cardId),
+    lines.push({ id: e.id, src: 'ledger', name: e.item, date: e.date || '', amount: +e.mine, full: +e.full, split: e.split === 'part' ? 'part' : !!e.split, from: cardName(e.cardId),
                  cardId: e.cardId, hold: false, cover: e.cover || '', pending: e.src === 'pending' && !!livePend[e.bankId], cleared: e.src === 'cleared' });
   });
   var rowById = {}; C.forEach(function (r) { rowById[r.id] = r; });
@@ -2048,7 +2203,7 @@ function coverFor(rowId) {
     else if (l.src === 'pending') {
       var p = find('Pending', l.id);
       led.push({ id: uid('lg'), src: 'pending', cardId: p.cardId, bankId: p.bankId, item: p.item, date: p.date || '', full: +p.amount, mine: l.amount,
-                 split: halfMine(p.who), cover: rowId, pid: '', on: today() });
+                 split: splitFlag(p), cover: rowId, pid: '', on: today() });
     } else led.forEach(function (e) { if (e.id === l.id) e.cover = rowId; });
   });
   var rest = r2(A - covered);
@@ -2265,7 +2420,7 @@ function potLines(mm, key, keepBefore) {
     if (before[l.id]) return;
     var how = l.cover ? 'paid with the card transfer' : l.cleared ? 'cleared on Cards, not sent yet' : 'not sent yet';
     out.push({ name: l.name, date: l.date, amount: -l.amount, type: true,
-               sub: (l.pending ? 'Pending · ' : '') + esc(l.from) + (l.split ? ' · your half of ' + money(l.full) : '') + ' · ' + how + (l.hold && !two ? ' · on hold on the Cards page' : ''),
+               sub: (l.pending ? 'Pending · ' : '') + esc(l.from) + (l.split ? (l.split === 'part' ? ' · your part of ' : ' · your half of ') + money(l.full) : '') + ' · ' + how + (l.hold && !two ? ' · on hold on the Cards page' : ''),
                next: l.cover || l.src === 'ledger' ? undefined : (two ? nextOn : l.hold), pots: two ? key : '', nextAct: 'hold', nextId: l.id, nextT: l.src === 'pending' ? 'Pending' : 'Charges', spent: true });
   });
   if (p.reserve) out.push({ name: p.extra ? 'Extra check to the joint' : 'Bills', date: '9999', amount: -p.reserve, sub: p.extra ? extraLine() : 'From Monthly Bills · set aside until the bills transfer shows up', fixed: 'Bills', muted: true });
@@ -2927,6 +3082,44 @@ function askName(title, ph, withColor, cb) {
     e.preventDefault(); var v = input.value.trim(); if (!v) return; closeModal(); cb(v, chosen);
   };
 }
+/* Custom… on a charge (Nov 19, 2026): type each person's part. "Rest" fills in whatever is left; Save only works once the
+   parts add up to the charge. */
+function customBox(table, id) {
+  var c = find(table, id); if (!c) return;
+  var amt = r2(+c.amount || 0), cur = shares(c);
+  var keys = [['Eric', 'Eric'], ['Arianna', 'Arianna'], ['Joint', 'Joint']]
+    .concat((S.People || []).slice().sort(byOrder).map(function (p) { return [p.id, '🎄 ' + p.name + '’s Christmas']; }));
+  var el = modal('<h3>Split ' + esc(c.item) + ' · ' + money(amt) + '</h3><p style="margin-top:0">Type each part. Christmas parts come out of the kids’ Christmas money in Specialty Savings, not anyone’s share.</p>' +
+    '<form id="mform"><div class="cust">' + keys.map(function (k) {
+      return '<label class="cust-row"><span>' + esc(k[1]) + '</span><input class="num" inputmode="decimal" autocomplete="off" data-k="' + esc(k[0]) + '" placeholder="0.00" value="' +
+        (cur[k[0]] ? plain(cur[k[0]]) : '') + '"><button type="button" class="btn small" data-rest="' + esc(k[0]) + '">Rest</button></label>';
+    }).join('') + '</div><div class="cust-left" id="custLeft"></div>' +
+    '<div class="mact"><button type="button" class="btn" data-m="no">Cancel</button><button class="btn primary" id="custSave">Save</button></div></form>');
+  var inputs = el.querySelectorAll('input[data-k]');
+  var parts = function () { var o = {}; Array.prototype.forEach.call(inputs, function (i) { var n = parseAmt(i.value); if (n) o[i.dataset.k] = n; }); return o; };
+  var left = function () { var o = parts(); return r2(amt - sum(Object.keys(o), function (k) { return o[k]; })); };
+  var show = function () {
+    var l = left(), ok = Math.abs(l) < 0.005;
+    el.querySelector('#custLeft').innerHTML = ok ? '✓ Adds up to ' + money(amt) : (l > 0 ? money(l) + ' still to split' : money(-l) + ' too much');
+    el.querySelector('#custLeft').className = 'cust-left' + (ok ? ' ok' : '');
+    el.querySelector('#custSave').disabled = !ok;
+  };
+  el.oninput = show;
+  el.onclick = function (e) {
+    var r = e.target.closest('[data-rest]');
+    if (r) { var i = el.querySelector('input[data-k="' + r.dataset.rest + '"]'); i.value = ''; var l = left(); i.value = l ? plain(l) : ''; show(); return; }
+    if (e.target.closest('[data-m="no"]') || e.target === el) closeModal();
+  };
+  el.querySelector('#mform').onsubmit = function (e) {
+    e.preventDefault(); if (Math.abs(left()) >= 0.005) return;
+    var o = parts(), ks = Object.keys(o), who = makeCustom(o);
+    if (ks.length === 1 && WHO.indexOf(ks[0]) >= 0) who = ks[0];                       // all of it to one person: the plain label
+    else if (ks.length === 2 && o.Eric && o.Arianna && Math.abs(o.Eric - o.Arianna) < 0.005) who = 'Split';
+    closeModal(); undoLabel = 'splitting “' + c.item + '”';
+    upsert(table, { id: id, who: who }); render();
+  };
+  show(); if (inputs[0]) inputs[0].focus();
+}
 var toastTimer;
 function toast(html, ms) {
   var t = document.getElementById('toast'); t.innerHTML = html; t.classList.add('on');
@@ -3061,7 +3254,9 @@ document.addEventListener('click', function (e) {
         if (p.dataset.pick === 'count') { undoLabel = 'counting “' + rx.item + '” again'; upsert('Charges', { id: id, ret: '' }); }
         else {
           undoLabel = 'closing the return for “' + rx.item + '”';
+          xmasSkip = true;   // refunded another way: not Christmas spending any more
           upsert('History', { id: rx.id, cardId: rx.cardId, item: rx.item + ' (returned)', amount: rx.amount, who: rx.who || '', date: rx.date || '', clearedOn: today() });
+          xmasSkip = false;
           removeRow('Charges', id);
         }
         render(); toast('Done. <button class="toast-btn" data-act="undo">Undo</button>', 6000); return;
@@ -3090,6 +3285,11 @@ document.addEventListener('click', function (e) {
   else if (a === 'paynudge') { var pc = find('Cards', id); undoLabel = 'marking ' + pc.name + ' paid'; upsert('Cards', { id: id, paid: true }); markPaySeen(id); render();
     toast(esc(pc.name) + ' marked paid <button class="toast-btn" data-act="undo">Undo</button>', 6000); }
   else if (a === 'paycal') { payCalBox(); }
+  else if (a === 'xmasmoved') {
+    var xf = xmasFund(), xa = r2(+b.dataset.v || 0); if (!xf || !xa) return;
+    undoLabel = 'logging the Christmas money move';
+    upsert('FundEntries', { id: uid('fm'), fundId: xf.id, date: today(), note: xa > 0 ? 'To the joint for Christmas charges' : 'Back from the joint (Christmas return)', amount: -xa, order: nextOrder(S.FundEntries) });
+    render(); toast('Logged ' + money(Math.abs(xa)) + (xa > 0 ? ' out of ' : ' back into ') + esc(xf.name) + ' <button class="toast-btn" data-act="undo">Undo</button>', 6000); }
   else if (a === 'paynope') { undoLabel = 'skipping that payment'; markPaySeen(id); render(); }
   else if (a === 'clearcard') {
     var cc = find('Cards', id), n = S.Charges.filter(function (x) { return x.cardId === id && counts(x); }).length;
@@ -3105,9 +3305,9 @@ document.addEventListener('click', function (e) {
         var mmx = moneyMath(calc()), led = mmx.ledger.slice(), dup = {}; mmx.dupes.forEach(function (d) { dup[d] = 1; });
         toClear.forEach(function (x) {
           var st = String(x.settled || '');
-          if (!(x.who === 'Eric' || halfMine(x.who)) || dup[x.id] || (st && st.indexOf('ct:') !== 0)) return;
+          if (!isEricsToo(x) || dup[x.id] || (st && st.indexOf('ct:') !== 0)) return;
           led.push({ id: uid('lg'), src: 'cleared', cardId: id, bankId: '', item: x.item, date: x.date || '', full: +x.amount,
-                     mine: halfMine(x.who) ? x.amount / 2 : +x.amount, split: halfMine(x.who), cover: st ? st.slice(3) : '', pid: '', on: today() });
+                     mine: ericPart(x), split: splitFlag(x), cover: st ? st.slice(3) : '', pid: '', on: today() });
         });
         saveLedger(led);
       }
@@ -3216,6 +3416,11 @@ document.addEventListener('change', function (e) {
   }
   var el = e.target; if (!el.dataset || !el.dataset.t || !el.dataset.id) return;
   var t = el.dataset.t, f = el.dataset.f, id = el.dataset.id, v = el.value;
+  if (f === 'who' && v === '__custom') { render(); customBox(t, id); return; }
+  if (f === 'who' && v.indexOf('xmas:') === 0) {
+    var xr = find(t, id), xo = {}; if (!xr) return;
+    xo[v.slice(5)] = +xr.amount || 0; v = makeCustom(xo);
+  }
   if (f === 'amount' || f === 'total' || f === 'us' || f === 'budget' || f === 'target' || f === 'perCheck' || (t === 'Settings' && id === 'christmasBudget')) {
     var n = parseAmt(v);
     if (n === null) { render(); return; }

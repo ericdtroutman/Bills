@@ -784,6 +784,83 @@ SCENARIOS.push({
   ]
 });
 
+// Nov 19, 2026: custom splits, and card charges paid from the kids' Christmas money (Specialty → joint → Eric).
+// A Christmas part is nobody's card share and doesn't touch Joint Left; it counts toward that kid's budget and the
+// "move from Specialty" amount until Eric taps Moved it.
+function xs() { return A.xmasMoney(); }
+function pickWho(id, value, table) {
+  A.document.body.insertAdjacentHTML('beforeend', '<select id="t_who" data-t="' + (table || 'Charges') + '" data-id="' + id + '" data-f="who"><option value="' + value + '">x</option></select>');
+  var el = A.document.getElementById('t_who'); el.value = value; el.dispatchEvent(new A.Event('change', { bubbles: true })); el.remove();
+}
+SCENARIOS.push({
+  title: 'Custom splits and the kids\' Christmas money',
+  about: 'Giovanna and Matteo have $700 budgets; Kids Christmas in Specialty holds $700. A $90 toy (Amex) goes to Giovanna\'s Christmas; a $100 Target run is split Giovanna $50, Joint $30, Arianna $20.',
+  needs: 'customBox',
+  data: (function () {
+    var d = startingData();
+    d.People = [{ id: 'p_g', name: 'Giovanna', budget: 700, order: 1 }, { id: 'p_m', name: 'Matteo', budget: 700, order: 2 }];
+    d.Funds = [{ id: 'f_x', name: 'Kids Christmas', color: 'rose', order: 1 }];
+    d.FundEntries = [{ id: 'fe_g', fundId: 'f_x', date: '', note: 'Giovanna', amount: 700, order: 1 }];
+    return d;
+  })(),
+  steps: [
+    { t: 'Label a $90 toy 🎄 Giovanna', run: function () {
+        var sc = SCENARIOS[SCENARIOS.length - 1], c = A.calc();
+        sc.b = { eric: c.eric, arianna: c.arianna, left: c.jointLeft, owed: mm().owed, cards: c.onCards };
+        A.S.Charges.push({ id: 'ch_toys', cardId: 'c_amex', item: 'TOYS R US', amount: 90, who: '', order: 20, date: A.today(), bankId: 'x20', hold: false, settled: '' });
+        pickWho('ch_toys', 'xmas:p_g');
+      }, check: function () {
+        var b = SCENARIOS[SCENARIOS.length - 1].b, c = A.calc(), x = xs();
+        return [yes('Saved as Giovanna\'s Christmas', A.whoLabel(A.find('Charges', 'ch_toys').who) === '🎄 Giovanna', A.find('Charges', 'ch_toys').who),
+          money('Eric owes the same', b.eric, c.eric), money('Arianna owes the same', b.arianna, c.arianna),
+          money('Joint Left the same', b.left, c.jointLeft), money('Not in Eric\'s card share', b.owed, mm().owed),
+          money('Counted on the card', b.cards + 90, c.onCards), yes('Doesn\'t need a person', c.needN === 0),
+          money('Christmas spent', 90, x.spent), money('To move from Specialty', 90, x.toMove),
+          says('Christmas page: Giovanna has $610 left', '$610.00', pageText('Christmas')), says('Cards page asks to move it', 'Move $90.00 from Specialty Savings to the joint', pageText('Cards')), pagesDraw()]; } },
+    { t: 'Custom… on a $100 Target run: Giovanna $50, Joint $30, Arianna gets the rest', run: function () {
+        A.S.Charges.push({ id: 'ch_run', cardId: 'c_chase', item: 'TARGET RUN', amount: 100, who: '', order: 21, date: A.today(), bankId: 'x21', hold: false, settled: '' });
+        A.customBox('Charges', 'ch_run');
+        var d = A.document, set = function (k, v) { d.querySelector('#modal input[data-k="' + k + '"]').value = v; };
+        set('p_g', '50'); set('Joint', '30'); d.querySelector('#modal [data-rest="Arianna"]').click();
+        SCENARIOS[SCENARIOS.length - 1].leftTxt = d.getElementById('custLeft').textContent;
+        d.getElementById('mform').dispatchEvent(new A.Event('submit', { cancelable: true }));
+      }, check: function () {
+        var b = SCENARIOS[SCENARIOS.length - 1].b, c = A.calc(), x = xs(), R = A.ariannaReport();
+        return [says('The box says it adds up', 'Adds up to $100.00', SCENARIOS[SCENARIOS.length - 1].leftTxt),
+          yes('Saved as a custom split', A.isCustom(A.find('Charges', 'ch_run').who), A.find('Charges', 'ch_run').who),
+          money('Arianna owes $20 more', b.arianna + 20, c.arianna), money('Eric owes the same', b.eric, c.eric),
+          money('Joint Left down $30', b.left - 30, c.jointLeft), money('Christmas spent', 140, x.spent),
+          money('Arianna\'s summary matches what she owes', r2(c.arianna + c.pend.arianna), R.total), money('Her summary lists the Christmas gifts apart', 140, R.xmas),
+          says('Joint page lists the joint\'s part', 'joint’s part of $100.00', pageText('Joint')), pagesDraw()]; } },
+    { t: 'A custom split that posts for a different amount is scaled', run: function () {},
+      check: function () { var o = A.shares({ amount: 12, who: 'Custom|Eric=5|p_m=5' });
+        return [money('Eric\'s part of $12', 6, o.Eric), money('Matteo\'s part of $12', 6, o.p_m)]; } },
+    { t: 'Eric moves the $140 and taps Moved it', run: function () {
+        A.document.body.insertAdjacentHTML('beforeend', '<button id="t_xm" data-act="xmasmoved" data-v="140"></button>');
+        A.document.getElementById('t_xm').click(); A.document.getElementById('t_xm').remove();
+      }, check: function () { var x = xs();
+        return [money('Nothing left to move', 0, x.toMove), money('Kids Christmas fund down to $560', 560, x.inFund),
+          yes('No reminder on the Cards page', pageText('Cards').indexOf('from Specialty Savings') < 0)]; } },
+    { t: 'Paying and clearing Amex keeps the toy in Christmas', run: function () {
+        A.confirmBox = function (t, x, ok, cb) { cb(); };
+        A.document.body.insertAdjacentHTML('beforeend', '<button id="t_clrx" data-act="clearcard" data-id="c_amex"></button>');
+        A.document.getElementById('t_clrx').click(); A.document.getElementById('t_clrx').remove();
+      }, check: function () { var x = xs();
+        return [yes('The toy is off the card', !A.find('Charges', 'ch_toys')), money('Christmas spent still $140', 140, x.spent), money('Still nothing to move', 0, x.toMove)]; } },
+    { t: 'A $40 charge split Eric $10, Matteo $30 counts $10 in Eric\'s card share', run: function () {
+        SCENARIOS[SCENARIOS.length - 1].o0 = mm().owed;
+        A.S.Charges.push({ id: 'ch_em', cardId: 'c_chase', item: 'LEGO', amount: 40, who: 'Custom|Eric=10|p_m=30', order: 22, date: A.today(), bankId: 'x22', hold: false, settled: '' });
+      }, check: function () { return [money('Eric\'s card share up $10', SCENARIOS[SCENARIOS.length - 1].o0 + 10, mm().owed), money('To move for Matteo', 30, xs().toMove)]; } },
+    { t: 'Sending the Target run back takes Giovanna\'s $50 off', run: function () {
+        A.document.body.insertAdjacentHTML('beforeend', '<button id="t_rr" data-act="retmark" data-id="ch_run"></button>');
+        A.document.getElementById('t_rr').click(); A.document.getElementById('t_rr').remove();
+      }, check: function () { var x = xs();
+        return [money('Christmas spent', 120, x.spent), money('$20 more was moved than spent now', -20, x.toMove),
+          says('Cards page offers to move it back', 'It can go back to Specialty Savings', pageText('Cards')), pagesDraw()]; } }
+  ]
+});
+function r2(n) { return Math.round(n * 100) / 100; }
+
 /* ---------------------------------------------------------------- run and show */
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
