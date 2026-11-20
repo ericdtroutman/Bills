@@ -914,8 +914,9 @@ function copyText(text) {
 /* ======================================================================= Arianna's pay-period summary (Eric, Nov 8, 2026)
    One tap on the Cards page makes a PDF of what Arianna's share of the cards is made of: her own charges plus her half of
    Split, posted and pending (not on hold, not being returned), so the total matches "Arianna owes, with pending". It shows
-   a pie by kind of spending, her top places added up (all the 7 Brew trips together), and every charge. The phone's share
-   sheet opens so it can go straight to her in Messages; without one, the file downloads. */
+   a pie by kind of spending, her top places added up (all the 7 Brew trips together), and every charge. Since Nov 20, 2026
+   (Eric: "just get the pdf print out ... not a link to email it") it opens in its own tab to print or save; if the tab
+   is blocked, the file downloads instead. */
 function ariannaReport() {
   var rows = [];
   var add = function (c, pending) {
@@ -977,6 +978,11 @@ function ariannaPdf() {
   var R = ariannaReport();
   if (!R.rows.length) { toast('Arianna has no charges right now.'); return; }
   toast('Making Arianna’s summary…');
+  // Eric, Nov 20, 2026: open the PDF itself to print or save, not the share sheet.
+  // The tab is opened now, while the tap still counts, so it isn't blocked as a pop-up.
+  var win = null;
+  try { win = window.open('', '_blank'); } catch (e) {}
+  if (win) { try { win.document.title = 'Arianna’s spending'; win.document.body.innerHTML = '<p style="font:16px system-ui;padding:24px;color:#555">Making Arianna’s summary…</p>'; } catch (e) {} }
   loadJsPdf().then(function (JsPDF) {
     var doc = new JsPDF({ unit: 'pt', format: 'letter' }), W = 612, M = 44, y = 56;
     var ink = [33, 37, 41], muted = [134, 142, 150], line = [222, 226, 230], accent = [230, 73, 128];
@@ -1040,16 +1046,15 @@ function ariannaPdf() {
     doc.text('Charges on hold for next pay period and returns waiting for a refund are not included.', M, y);
     if (R.xmas) { y += 14; doc.text(pdfText('Not in her share: ' + money(R.xmas) + ' of the kids\' Christmas gifts (' + R.xmasN + (R.xmasN === 1 ? ' charge' : ' charges') + '), paid from the Christmas money in savings.'), M, y); }
     var fname = 'Arianna spending ' + (R.to ? longDate(R.to) : longDate(today())).replace(/,/g, '') + '.pdf';
-    var blob = doc.output('blob'), file = null;
-    try { file = new File([blob], fname, { type: 'application/pdf' }); } catch (e) {}
-    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
-      navigator.share({ files: [file], title: 'Arianna’s spending', text: 'Your card spending this pay period: ' + money(R.total) }).catch(function () {});
-    } else {
-      var url = URL.createObjectURL(blob), a = document.createElement('a');
+    doc.setProperties({ title: fname.replace(/\.pdf$/, '') });
+    var blob = new Blob([doc.output('arraybuffer')], { type: 'application/pdf' }), url = URL.createObjectURL(blob);
+    if (win && !win.closed) win.location.href = url;   // the PDF opens; print or save it from there
+    else {                                              // no new tab allowed: save the file instead
+      var a = document.createElement('a');
       a.href = url; a.download = fname; document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
     }
-  }, function (e) { toast(e.message || 'Couldn’t make the PDF.'); });
+    setTimeout(function () { URL.revokeObjectURL(url); }, 10 * 60000);
+  }, function (e) { if (win && !win.closed) win.close(); toast(e.message || 'Couldn’t make the PDF.'); });
 }
 
 /* ======================================================================= views */
@@ -1068,7 +1073,7 @@ function viewCards(m) {
       m.returning.length ? money(sum(m.returning, function (x) { return x.amount; })) + ' being returned, not counted' :
       (m.pend.n ? 'Includes ' + money(m.pend.all) + ' pending' : 'Every charge has a person')), warn: !!m.needN }) +
     '</div>';
-  h += '<div style="margin:-4px 0 14px"><button class="btn small" data-act="ariannapdf" title="A PDF of her charges and her half of Split, ready to send her">Send Arianna her summary (PDF)</button></div>';
+  h += '<div style="margin:-4px 0 14px"><button class="btn small" data-act="ariannapdf" title="Opens a PDF of her charges and her half of Split, ready to print">Print Arianna’s summary (PDF)</button></div>';
 
   h += payNudge(cards);
   h += xmasNudge();
